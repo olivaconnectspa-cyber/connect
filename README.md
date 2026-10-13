@@ -14,6 +14,7 @@ Prototipo móvil para ayudar a repartidores a organizar sus rutas y entregas. Es
 - Pantalla de ruta donde se pueden añadir direcciones manualmente.
 - Las paradas se guardan localmente si Firebase no está configurado; con Firebase y una sesión activa, las rutas y entregas del día se sincronizan con la cuenta.
 - Se pueden marcar las entregas como pendientes, entregadas o fallidas; una entrega fallida requiere motivo.
+- El historial agrupa las rutas locales por fecha y, al iniciar sesión con Firebase, muestra las últimas 30 rutas de la cuenta.
 - La pantalla Cuenta permite crear usuario, iniciar sesión y verificar correo.
 
 Para configurar tu nuevo proyecto Firebase, sigue [la guía de Firebase](docs/FIREBASE_SETUP.md). No se incluyen credenciales: debes crear el proyecto y poner su configuración local en `.env`.

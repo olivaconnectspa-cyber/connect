@@ -43,7 +43,7 @@ Instala Firebase CLI si no la tienes, inicia sesión y desde la terminal integra
 ```powershell
 npx.cmd firebase-tools login
 npx.cmd firebase-tools use --add
-npx.cmd firebase-tools deploy --only firestore:rules
+npx.cmd firebase-tools deploy --only firestore:rules,firestore:indexes
 ```
 
 Cuando pregunte por el proyecto, selecciona el que acabas de crear. Comprueba que `firebase.json` apunta a `firestore.rules` antes de desplegar.

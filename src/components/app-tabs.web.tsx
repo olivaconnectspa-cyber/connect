@@ -29,6 +29,9 @@ export default function AppTabs() {
           <TabTrigger name="cuenta" href="/cuenta" asChild>
             <TabButton>Cuenta</TabButton>
           </TabTrigger>
+          <TabTrigger name="historial" href={'/historial' as Href} asChild>
+            <TabButton>Historial</TabButton>
+          </TabTrigger>
         </CustomTabList>
       </TabList>
     </Tabs>

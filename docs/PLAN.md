@@ -76,10 +76,11 @@ Crear una app móvil para repartidores que organice rutas y entregas, y que inco
 - Proyecto móvil creado con React Native y Expo.
 - Pantallas iniciales de Inicio y Ruta.
 - Se pueden añadir y eliminar direcciones; quedan guardadas localmente mientras Firebase no esté configurado.
+- La app conserva rutas locales por fecha y muestra un resumen del historial; con sesión de Firebase puede consultar las últimas 30 rutas de la cuenta.
 - La app tiene registro e inicio de sesión por correo con verificación de correo.
 - Con Firebase configurado y sesión activa, las rutas y entregas del día se guardan en Firestore con reglas de acceso por usuario.
 - Las entregas admiten estados pendiente, entregada y fallida; esta última requiere registrar el motivo.
 - Git está inicializado en la rama `main`; todavía falta enlazar un repositorio remoto de GitHub.
-- Faltan historial, fotos, teléfono verificado, mapas, optimización, funciones comunitarias, planes, recompensas y pagos.
+- Faltan importación Excel/CSV, fotos, teléfono verificado, mapas, optimización, funciones comunitarias, planes, recompensas y pagos.
 
 La preparación de Firebase y sus pasos de configuración están en [FIREBASE_SETUP.md](FIREBASE_SETUP.md).

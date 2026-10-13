@@ -3,11 +3,13 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   orderBy,
   query,
   runTransaction,
   serverTimestamp,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import { db } from './firebase';
 
@@ -28,6 +30,42 @@ export type TodayRoute = {
   status: 'active' | 'completed';
   deliveries: Delivery[];
 };
+
+export async function loadRouteHistory(userId: string): Promise<TodayRoute[]> {
+  const routesQuery = query(
+    collection(requireDb(), 'users', userId, 'routes'),
+    where('ownerId', '==', userId),
+    orderBy('routeDate', 'desc'),
+    limit(30),
+  );
+  const routeSnapshots = await getDocs(routesQuery);
+  return Promise.all(routeSnapshots.docs.map(async (routeSnapshot) => {
+    const routeRef = routeSnapshot.ref;
+    const deliverySnapshots = await getDocs(query(
+      collection(routeRef, 'deliveries'),
+      orderBy('sequence', 'asc'),
+    ));
+    const routeData = routeSnapshot.data();
+    const deliveries: Delivery[] = deliverySnapshots.docs.map((deliverySnapshot) => {
+      const data = deliverySnapshot.data();
+      const status = data.status;
+      return {
+        id: deliverySnapshot.id,
+        address: typeof data.address === 'string' ? data.address : '',
+        sequence: typeof data.sequence === 'number' ? data.sequence : 0,
+        status: status === 'delivered' || status === 'failed' ? status : 'pending',
+        failureReason: typeof data.failureReason === 'string' ? data.failureReason : null,
+        proofPhotoUrl: typeof data.proofPhotoUrl === 'string' ? data.proofPhotoUrl : null,
+      };
+    });
+    return {
+      id: routeSnapshot.id,
+      date: typeof routeData.routeDate === 'string' ? routeData.routeDate : routeSnapshot.id,
+      status: routeData.status === 'completed' ? 'completed' as const : 'active' as const,
+      deliveries,
+    };
+  }));
+}
 
 function requireDb() {
   if (!db) throw new Error('firebase-not-configured');
