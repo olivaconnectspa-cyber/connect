@@ -1,0 +1,126 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedInAs(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function ownsRoute(userId, routeId) {
+      let routePath = /databases/$(database)/documents/users/$(userId)/routes/$(routeId);
+      return signedInAs(userId)
+        && exists(routePath)
+        && get(routePath).data.ownerId == userId;
+    }
+
+    function ownsRouteAfterWrite(userId, routeId) {
+      let routePath = /databases/$(database)/documents/users/$(userId)/routes/$(routeId);
+      return signedInAs(userId)
+        && getAfter(routePath).data.ownerId == userId;
+    }
+
+    match /users/{userId}/routes/{routeId} {
+      allow read: if signedInAs(userId) && resource.data.ownerId == userId;
+
+      allow create: if signedInAs(userId)
+        && request.resource.data.ownerId == userId
+        && request.resource.data.keys().hasOnly([
+          'ownerId', 'routeDate', 'status', 'stopCount', 'nextSequence',
+          'startAddress', 'endAddress', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'ownerId', 'routeDate', 'status', 'stopCount', 'nextSequence',
+          'startAddress', 'endAddress', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.routeDate is string
+        && request.resource.data.status == 'active'
+        && request.resource.data.stopCount is int
+        && request.resource.data.stopCount >= 0
+        && request.resource.data.nextSequence is int
+        && request.resource.data.nextSequence >= 1
+        && request.resource.data.startAddress is string
+        && request.resource.data.endAddress is string
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+
+      allow update: if signedInAs(userId)
+        && resource.data.ownerId == userId
+        && request.resource.data.ownerId == userId
+        && request.resource.data.routeDate == resource.data.routeDate
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.keys().hasOnly([
+          'ownerId', 'routeDate', 'status', 'stopCount', 'nextSequence',
+          'startAddress', 'endAddress', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.status in ['active', 'completed']
+        && request.resource.data.stopCount is int
+        && request.resource.data.stopCount >= 0
+        && request.resource.data.nextSequence is int
+        && request.resource.data.nextSequence >= resource.data.nextSequence
+        && request.resource.data.updatedAt is timestamp;
+
+      allow delete: if signedInAs(userId) && resource.data.ownerId == userId;
+
+      match /deliveries/{deliveryId} {
+        allow read: if ownsRoute(userId, routeId)
+          && resource.data.ownerId == userId;
+
+        allow create: if ownsRouteAfterWrite(userId, routeId)
+          && request.resource.data.ownerId == userId
+          && request.resource.data.keys().hasOnly([
+            'ownerId', 'address', 'sequence', 'status', 'failureReason',
+            'proofPhotoUrl', 'createdAt', 'updatedAt', 'deliveredAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'ownerId', 'address', 'sequence', 'status', 'failureReason',
+            'proofPhotoUrl', 'createdAt', 'updatedAt', 'deliveredAt'
+          ])
+          && request.resource.data.address is string
+          && request.resource.data.address.size() > 0
+          && request.resource.data.address.size() <= 500
+          && request.resource.data.sequence is int
+          && request.resource.data.sequence >= 1
+          && request.resource.data.status == 'pending'
+          && request.resource.data.failureReason == null
+          && request.resource.data.proofPhotoUrl == null
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.updatedAt is timestamp
+          && request.resource.data.deliveredAt == null;
+
+        allow update: if ownsRoute(userId, routeId)
+          && resource.data.ownerId == userId
+          && request.resource.data.ownerId == userId
+          && request.resource.data.address == resource.data.address
+          && request.resource.data.sequence == resource.data.sequence
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'failureReason', 'proofPhotoUrl', 'updatedAt', 'deliveredAt'
+          ])
+          && request.resource.data.status in ['pending', 'delivered', 'failed']
+          && request.resource.data.updatedAt is timestamp
+          && (request.resource.data.failureReason == null
+            || (request.resource.data.failureReason is string
+              && request.resource.data.failureReason.size() <= 300))
+          && (request.resource.data.proofPhotoUrl == null
+            || (request.resource.data.proofPhotoUrl is string
+              && request.resource.data.proofPhotoUrl.size() <= 2048))
+          && ((request.resource.data.status == 'failed'
+              && request.resource.data.failureReason is string
+              && request.resource.data.failureReason.size() > 0
+              && request.resource.data.deliveredAt == null)
+            || (request.resource.data.status == 'delivered'
+              && request.resource.data.failureReason == null
+              && request.resource.data.deliveredAt is timestamp)
+            || (request.resource.data.status == 'pending'
+              && request.resource.data.failureReason == null
+              && request.resource.data.deliveredAt == null));
+
+        allow delete: if ownsRoute(userId, routeId)
+          && resource.data.ownerId == userId;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
