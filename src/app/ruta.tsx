@@ -1,4 +1,6 @@
 import { Link } from 'expo-router';
+import * as DocumentPicker from 'expo-document-picker';
+import { File } from 'expo-file-system';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -6,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { addDeliveryToTodayRoute, loadTodayRoute, removeDeliveryFromTodayRoute, updateDeliveryStatus, type Delivery } from '@/lib/route-repository';
 import { auth, isFirebaseConfigured } from '@/lib/firebase';
 import { loadStops, saveStops, type Stop } from '@/lib/stops';
+import { parseCsvAddresses } from '@/lib/csv';
 
 const colors = { ink: '#20352B', muted: '#718078', green: '#315E43', pale: '#F2F5EF', line: '#E5EAE3', white: '#FFFFFF', red: '#A14337' };
 
@@ -18,6 +21,7 @@ export default function RouteScreen() {
   const [busy, setBusy] = useState(false);
   const [failureId, setFailureId] = useState<string | null>(null);
   const [failureReason, setFailureReason] = useState('');
+  const [importPreview, setImportPreview] = useState<string[] | null>(null);
 
   const refresh = useCallback(async (currentUser: User | null) => {
     setIsLoading(true);
@@ -82,6 +86,76 @@ export default function RouteScreen() {
       setAddress('');
     } catch {
       setStorageError('No se pudo guardar la parada. Revisa tu conexión e inténtalo de nuevo.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function chooseCsvFile() {
+    if (busy || isLoading) return;
+    setStorageError('');
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/csv', 'text/comma-separated-values', 'application/vnd.ms-excel'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled) return;
+      const file = result.assets[0];
+      if (!file.name.toLowerCase().endsWith('.csv')) {
+        setStorageError('Elige un archivo CSV. Si tienes Excel, guárdalo como CSV UTF-8.');
+        return;
+      }
+      if (file.size && file.size > 2 * 1024 * 1024) {
+        setStorageError('El archivo supera 2 MB. Guarda solo la columna de direcciones e inténtalo otra vez.');
+        return;
+      }
+      const addresses = parseCsvAddresses(await new File(file.uri).text());
+      if (addresses.length === 0) {
+        setStorageError('No encontramos direcciones en ese CSV. Usa una columna llamada Dirección o deja las direcciones en la primera columna.');
+        return;
+      }
+      const existing = new Set(stops.map((stop) => stop.address.trim().toLocaleLowerCase()));
+      const newAddresses = addresses.filter((item) => !existing.has(item.trim().toLocaleLowerCase()));
+      if (newAddresses.length === 0) {
+        setStorageError('Todas las direcciones del archivo ya están en la ruta.');
+        return;
+      }
+      setImportPreview(newAddresses);
+    } catch {
+      setStorageError('No se pudo leer el archivo. Guarda una copia como CSV UTF-8 e inténtalo de nuevo.');
+    }
+  }
+
+  async function importCsvAddresses() {
+    if (!importPreview?.length || busy) return;
+    if (isFirebaseConfigured && !user) {
+      setStorageError('Inicia sesión en Cuenta para importar las paradas a Firebase.');
+      return;
+    }
+    setBusy(true);
+    setStorageError('');
+    try {
+      if (isFirebaseConfigured && user) {
+        for (const item of importPreview) {
+          const created = await addDeliveryToTodayRoute(user.uid, item);
+          setStops((current) => [...current, created]);
+        }
+      } else {
+        const imported = importPreview.map((item, index): Delivery => ({
+          id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+          address: item,
+          sequence: stops.length + index + 1,
+          status: 'pending',
+          failureReason: null,
+          proofPhotoUrl: null,
+        }));
+        const next = [...stops, ...imported];
+        await persistLocal(next);
+        setStops(next);
+      }
+      setImportPreview(null);
+    } catch {
+      setStorageError('Algunas paradas podrían haberse importado antes del error. Revisa la ruta e inténtalo con las restantes.');
     } finally {
       setBusy(false);
     }
@@ -165,7 +239,22 @@ export default function RouteScreen() {
           <Pressable style={[styles.addButton, (isLoading || busy) && styles.disabledButton]} onPress={addStop} disabled={isLoading || busy}>
             <Text style={styles.addButtonText}>{busy ? 'Guardando…' : '＋  Añadir parada'}</Text>
           </Pressable>
+          <Pressable style={[styles.importButton, (isLoading || busy) && styles.disabledButton]} onPress={chooseCsvFile} disabled={isLoading || busy}>
+            <Text style={styles.importButtonText}>Importar direcciones desde CSV</Text>
+          </Pressable>
+          <Text style={styles.csvHint}>Si usas Excel, guarda la hoja como CSV UTF-8.</Text>
         </View>
+
+        {importPreview && <View style={styles.previewCard}>
+          <Text style={styles.previewTitle}>Revisar importación</Text>
+          <Text style={styles.previewText}>{importPreview.length} {importPreview.length === 1 ? 'dirección nueva' : 'direcciones nuevas'} listas para añadir.</Text>
+          {importPreview.slice(0, 3).map((item, index) => <Text key={`${index}-${item}`} style={styles.previewAddress}>• {item}</Text>)}
+          {importPreview.length > 3 && <Text style={styles.previewText}>y {importPreview.length - 3} más…</Text>}
+          <View style={styles.previewActions}>
+            <Pressable style={styles.cancelImportButton} onPress={() => setImportPreview(null)} disabled={busy}><Text style={styles.cancelImportText}>Cancelar</Text></Pressable>
+            <Pressable style={[styles.confirmImportButton, busy && styles.disabledButton]} onPress={importCsvAddresses} disabled={busy}><Text style={styles.confirmImportText}>{busy ? 'Importando…' : 'Añadir paradas'}</Text></Pressable>
+          </View>
+        </View>}
 
         {isFirebaseConfigured && !user && <View style={styles.accountNotice}><Text style={styles.accountText}>Inicia sesión para guardar y consultar tus rutas en Firebase.</Text><Link href="/cuenta" asChild><Pressable><Text style={styles.accountLink}>Ir a Cuenta →</Text></Pressable></Link></View>}
         <View style={styles.listHeader}>
@@ -204,6 +293,8 @@ const styles = StyleSheet.create({
   eyebrow: { color: colors.green, fontSize: 10, fontWeight: '700', letterSpacing: 1.5 }, title: { color: colors.ink, fontSize: 28, fontWeight: '700', marginTop: 7 }, subtitle: { color: colors.muted, fontSize: 14, lineHeight: 21, marginTop: 8 },
   inputCard: { backgroundColor: colors.white, borderRadius: 18, borderWidth: 1, borderColor: colors.line, padding: 16, marginTop: 24 }, inputLabel: { color: colors.muted, fontSize: 9, fontWeight: '700', letterSpacing: 1.2 }, input: { minHeight: 48, color: colors.ink, fontSize: 14, borderBottomWidth: 1, borderBottomColor: colors.line, marginBottom: 14 },
   addButton: { height: 50, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.green, borderRadius: 14, marginTop: 16 }, disabledButton: { opacity: 0.55 }, addButtonText: { color: colors.white, fontSize: 14, fontWeight: '700' },
+  importButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.line, borderRadius: 12, marginTop: 9 }, importButtonText: { color: colors.green, fontSize: 12, fontWeight: '700' }, csvHint: { color: colors.muted, fontSize: 10, lineHeight: 15, marginTop: 7, textAlign: 'center' },
+  previewCard: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, borderRadius: 16, padding: 15, marginTop: 12 }, previewTitle: { color: colors.ink, fontSize: 14, fontWeight: '700' }, previewText: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 7 }, previewAddress: { color: colors.ink, fontSize: 11, lineHeight: 17, marginTop: 5 }, previewActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 14 }, cancelImportButton: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 12 }, cancelImportText: { color: colors.muted, fontSize: 12, fontWeight: '600' }, confirmImportButton: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 14, backgroundColor: colors.green, borderRadius: 11 }, confirmImportText: { color: colors.white, fontSize: 12, fontWeight: '700' },
   accountNotice: { backgroundColor: '#E7EDE3', borderRadius: 14, padding: 14, marginTop: 16 }, accountText: { color: colors.ink, fontSize: 12, lineHeight: 18 }, accountLink: { color: colors.green, fontWeight: '700', marginTop: 8 },
   listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 25, marginBottom: 10 }, listHeading: { color: colors.ink, fontSize: 15, fontWeight: '700' }, stopCount: { color: colors.green, fontWeight: '700' }, historyLink: { color: colors.green, fontSize: 12, fontWeight: '700' }, helper: { color: colors.muted, padding: 12 },
   emptyCard: { minHeight: 185, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, marginTop: 3, backgroundColor: colors.white, borderRadius: 22, borderWidth: 1, borderColor: colors.line }, pin: { width: 58, height: 58, borderRadius: 20, backgroundColor: '#EAF1E8', alignItems: 'center', justifyContent: 'center', marginBottom: 17 }, pinText: { color: colors.green, fontSize: 30 }, emptyTitle: { color: colors.ink, fontSize: 17, fontWeight: '700', textAlign: 'center' }, emptyDescription: { color: colors.muted, fontSize: 13, lineHeight: 20, textAlign: 'center', marginTop: 9 },
