@@ -288,7 +288,7 @@ export default function RouteScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: colors.pale }, content: { width: '100%', maxWidth: 560, alignSelf: 'center', padding: 22, paddingBottom: 40, flexGrow: 1 },
+  safeArea: { flex: 1, backgroundColor: colors.pale }, content: { width: '100%', maxWidth: 560, alignSelf: 'center', padding: 22, paddingBottom: 116, flexGrow: 1 },
   backButton: { alignSelf: 'flex-start', paddingVertical: 8, paddingRight: 14, marginBottom: 25 }, backText: { color: colors.green, fontSize: 14, fontWeight: '600' },
   eyebrow: { color: colors.green, fontSize: 10, fontWeight: '700', letterSpacing: 1.5 }, title: { color: colors.ink, fontSize: 28, fontWeight: '700', marginTop: 7 }, subtitle: { color: colors.muted, fontSize: 14, lineHeight: 21, marginTop: 8 },
   inputCard: { backgroundColor: colors.white, borderRadius: 18, borderWidth: 1, borderColor: colors.line, padding: 16, marginTop: 24 }, inputLabel: { color: colors.muted, fontSize: 9, fontWeight: '700', letterSpacing: 1.2 }, input: { minHeight: 48, color: colors.ink, fontSize: 14, borderBottomWidth: 1, borderBottomColor: colors.line, marginBottom: 14 },

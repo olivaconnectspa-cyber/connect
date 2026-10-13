@@ -78,6 +78,8 @@ Crear una app móvil para repartidores que organice rutas y entregas, y que inco
 - Se pueden añadir y eliminar direcciones; quedan guardadas localmente mientras Firebase no esté configurado.
 - La app conserva rutas locales por fecha y muestra un resumen del historial; con sesión de Firebase puede consultar las últimas 30 rutas de la cuenta.
 - La pantalla de ruta permite importar direcciones desde CSV y revisar una vista previa antes de agregarlas. Los archivos de Excel se deben guardar como CSV UTF-8.
+- Inicio muestra la fecha, el nombre editable de la ruta actual y los totales de paradas entregadas, pendientes y fallidas; el resumen se actualiza al volver a Inicio.
+- Las pestañas móviles muestran siempre los nombres Inicio, Ruta, Cuenta e Historial.
 - La app tiene registro e inicio de sesión por correo con verificación de correo.
 - Con Firebase configurado y sesión activa, las rutas y entregas del día se guardan en Firestore con reglas de acceso por usuario.
 - Las entregas admiten estados pendiente, entregada y fallida; esta última requiere registrar el motivo.

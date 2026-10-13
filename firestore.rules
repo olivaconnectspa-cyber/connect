@@ -24,14 +24,17 @@ service cloud.firestore {
       allow create: if signedInAs(userId)
         && request.resource.data.ownerId == userId
         && request.resource.data.keys().hasOnly([
-          'ownerId', 'routeDate', 'status', 'stopCount', 'nextSequence',
+          'ownerId', 'routeDate', 'routeName', 'status', 'stopCount', 'nextSequence',
           'startAddress', 'endAddress', 'createdAt', 'updatedAt'
         ])
         && request.resource.data.keys().hasAll([
-          'ownerId', 'routeDate', 'status', 'stopCount', 'nextSequence',
+          'ownerId', 'routeDate', 'routeName', 'status', 'stopCount', 'nextSequence',
           'startAddress', 'endAddress', 'createdAt', 'updatedAt'
         ])
         && request.resource.data.routeDate is string
+        && request.resource.data.routeName is string
+        && request.resource.data.routeName.size() > 0
+        && request.resource.data.routeName.size() <= 60
         && request.resource.data.status == 'active'
         && request.resource.data.stopCount is int
         && request.resource.data.stopCount >= 0
@@ -47,8 +50,12 @@ service cloud.firestore {
         && request.resource.data.ownerId == userId
         && request.resource.data.routeDate == resource.data.routeDate
         && request.resource.data.createdAt == resource.data.createdAt
+        && (!request.resource.data.keys().hasAny(['routeName'])
+          || (request.resource.data.routeName is string
+            && request.resource.data.routeName.size() > 0
+            && request.resource.data.routeName.size() <= 60))
         && request.resource.data.keys().hasOnly([
-          'ownerId', 'routeDate', 'status', 'stopCount', 'nextSequence',
+          'ownerId', 'routeDate', 'routeName', 'status', 'stopCount', 'nextSequence',
           'startAddress', 'endAddress', 'createdAt', 'updatedAt'
         ])
         && request.resource.data.status in ['active', 'completed']

@@ -187,7 +187,7 @@ export default function AccountScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.pale },
-  content: { width: '100%', maxWidth: 560, alignSelf: 'center', padding: 22, paddingBottom: 40, flexGrow: 1 },
+  content: { width: '100%', maxWidth: 560, alignSelf: 'center', padding: 22, paddingBottom: 116, flexGrow: 1 },
   eyebrow: { color: colors.green, fontSize: 10, fontWeight: '700', letterSpacing: 1.5, marginTop: 22 },
   title: { color: colors.ink, fontSize: 28, fontWeight: '700', marginTop: 7 },
   subtitle: { color: colors.muted, fontSize: 14, lineHeight: 21, marginTop: 8, marginBottom: 22 },

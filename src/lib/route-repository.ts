@@ -12,6 +12,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { DEFAULT_ROUTE_NAME } from './stops';
 
 export type DeliveryStatus = 'pending' | 'delivered' | 'failed';
 
@@ -27,6 +28,7 @@ export type Delivery = {
 export type TodayRoute = {
   id: string;
   date: string;
+  name: string;
   status: 'active' | 'completed';
   deliveries: Delivery[];
 };
@@ -61,6 +63,7 @@ export async function loadRouteHistory(userId: string): Promise<TodayRoute[]> {
     return {
       id: routeSnapshot.id,
       date: typeof routeData.routeDate === 'string' ? routeData.routeDate : routeSnapshot.id,
+      name: typeof routeData.routeName === 'string' ? routeData.routeName : DEFAULT_ROUTE_NAME,
       status: routeData.status === 'completed' ? 'completed' as const : 'active' as const,
       deliveries,
     };
@@ -99,6 +102,7 @@ export async function loadTodayRoute(userId: string): Promise<TodayRoute | null>
   return {
     id: routeSnapshot.id,
     date: typeof routeData.routeDate === 'string' ? routeData.routeDate : routeSnapshot.id,
+    name: typeof routeData.routeName === 'string' ? routeData.routeName : DEFAULT_ROUTE_NAME,
     status: routeData.status === 'completed' ? 'completed' : 'active',
     deliveries: deliveriesSnapshot.docs.map((deliverySnapshot) => {
       const deliveryData = deliverySnapshot.data();
@@ -141,6 +145,7 @@ export async function addDeliveryToTodayRoute(userId: string, address: string): 
       ownerId: userId,
       routeDate,
       status: 'active',
+      routeName: typeof routeData?.routeName === 'string' ? routeData.routeName : DEFAULT_ROUTE_NAME,
       stopCount: currentCount + 1,
       nextSequence: nextSequence + 1,
       startAddress: typeof routeData?.startAddress === 'string' ? routeData.startAddress : '',
@@ -171,6 +176,32 @@ export async function addDeliveryToTodayRoute(userId: string, address: string): 
     failureReason: null,
     proofPhotoUrl: null,
   };
+}
+
+export async function updateTodayRouteName(userId: string, name: string): Promise<string> {
+  const firestore = requireDb();
+  const routeId = getLocalDateKey();
+  const routeRef = getRouteRef(userId, routeId);
+  const cleanName = name.trim().slice(0, 60) || DEFAULT_ROUTE_NAME;
+  await runTransaction(firestore, async (transaction) => {
+    const routeSnapshot = await transaction.get(routeRef);
+    const routeData = routeSnapshot.exists() ? routeSnapshot.data() : null;
+    if (routeData?.status === 'completed') throw new Error('route-completed');
+    const timestamp = serverTimestamp();
+    transaction.set(routeRef, {
+      ownerId: userId,
+      routeDate: routeId,
+      routeName: cleanName,
+      status: 'active',
+      stopCount: typeof routeData?.stopCount === 'number' ? routeData.stopCount : 0,
+      nextSequence: typeof routeData?.nextSequence === 'number' ? routeData.nextSequence : 1,
+      startAddress: typeof routeData?.startAddress === 'string' ? routeData.startAddress : '',
+      endAddress: typeof routeData?.endAddress === 'string' ? routeData.endAddress : '',
+      createdAt: routeData?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+    });
+  });
+  return cleanName;
 }
 
 export async function removeDeliveryFromTodayRoute(userId: string, deliveryId: string): Promise<void> {

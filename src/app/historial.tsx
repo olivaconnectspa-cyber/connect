@@ -97,7 +97,7 @@ export default function HistoryScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.pale },
-  content: { width: '100%', maxWidth: 560, alignSelf: 'center', padding: 22, paddingBottom: 40, flexGrow: 1 },
+  content: { width: '100%', maxWidth: 560, alignSelf: 'center', padding: 22, paddingBottom: 116, flexGrow: 1 },
   backButton: { alignSelf: 'flex-start', paddingVertical: 8, paddingRight: 14, marginBottom: 25 },
   backText: { color: colors.green, fontSize: 14, fontWeight: '600' },
   eyebrow: { color: colors.green, fontSize: 10, fontWeight: '700', letterSpacing: 1.5 },

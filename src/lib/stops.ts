@@ -10,6 +10,8 @@ export type Stop = {
 
 const STOPS_STORAGE_KEY = '@oliva-connect/stops/v1';
 const ROUTE_STORAGE_PREFIX = '@connect/routes/';
+const ROUTE_NAME_STORAGE_PREFIX = '@connect/route-names/';
+export const DEFAULT_ROUTE_NAME = 'Ruta del día';
 
 export type LocalRouteHistory = {
   date: string;
@@ -25,6 +27,19 @@ export function getLocalRouteDate(date = new Date()): string {
 
 function routeStorageKey(date = getLocalRouteDate()) {
   return `${ROUTE_STORAGE_PREFIX}${date}`;
+}
+
+function routeNameStorageKey(date = getLocalRouteDate()) {
+  return `${ROUTE_NAME_STORAGE_PREFIX}${date}`;
+}
+
+export async function loadLocalRouteName(date = getLocalRouteDate()): Promise<string> {
+  return (await AsyncStorage.getItem(routeNameStorageKey(date)))?.trim() || DEFAULT_ROUTE_NAME;
+}
+
+export async function saveLocalRouteName(name: string, date = getLocalRouteDate()): Promise<void> {
+  const cleanName = name.trim().slice(0, 60) || DEFAULT_ROUTE_NAME;
+  await AsyncStorage.setItem(routeNameStorageKey(date), cleanName);
 }
 
 export async function loadStops(): Promise<Stop[]> {
