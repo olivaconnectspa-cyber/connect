@@ -25,7 +25,7 @@ function summarizeCloud(routes: TodayRoute[]): HistoryEntry[] {
 
 function summarizeLocal(routes: LocalRouteHistory[]): HistoryEntry[] {
   return routes.map((route) => ({
-    id: route.date,
+    id: route.id,
     date: route.date,
     name: route.name,
     total: route.stops.length,
@@ -95,7 +95,7 @@ export default function HistoryScreen() {
     try {
       const name = routeNames[entry.id]?.trim().slice(0, 60) || DEFAULT_ROUTE_NAME;
       if (isFirebaseConfigured && user) await updateRouteName(user.uid, entry.id, name);
-      else await saveLocalRouteName(name, entry.date);
+      else await saveLocalRouteName(name, entry.id);
       setEntries((current) => current.map((item) => item.id === entry.id ? { ...item, name } : item));
       setRouteNames((current) => ({ ...current, [entry.id]: name }));
       setNotice(`Nombre de ruta guardado: ${name}`);
@@ -120,7 +120,7 @@ export default function HistoryScreen() {
     try {
       if (isFirebaseConfigured && user) await deleteRouteHistory(user.uid, entry.id);
       else if (isFirebaseConfigured) throw new Error('login-required');
-      else await deleteLocalRoute(entry.date);
+      else await deleteLocalRoute(entry.id);
       setEntries((current) => current.filter((item) => item.id !== entry.id));
       setRouteNames((current) => { const next = { ...current }; delete next[entry.id]; return next; });
       setSelectedRouteId(null);

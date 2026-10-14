@@ -4,7 +4,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { useCallback, useEffect, useState } from 'react';
 import { Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { DEFAULT_ROUTE_NAME, getLocalRouteDate, loadLocalRouteName, loadStops, saveLocalRouteName } from '@/lib/stops';
+import { DEFAULT_ROUTE_NAME, getLocalRouteDate, loadLocalRouteId, loadLocalRouteName, loadStops, saveLocalRouteName } from '@/lib/stops';
 import { auth, isFirebaseConfigured } from '@/lib/firebase';
 import { loadTodayRoute, updateTodayRouteName } from '@/lib/route-repository';
 
@@ -23,6 +23,7 @@ export default function HomeScreen() {
   const [routeName, setRouteName] = useState(DEFAULT_ROUTE_NAME);
   const [savedRouteName, setSavedRouteName] = useState(DEFAULT_ROUTE_NAME);
   const [routeStats, setRouteStats] = useState({ total: 0, delivered: 0, pending: 0, failed: 0 });
+  const [routeId, setRouteId] = useState<string | null>(null);
   const [savingName, setSavingName] = useState(false);
   const [nameMessage, setNameMessage] = useState('');
 
@@ -41,6 +42,7 @@ export default function HomeScreen() {
           const route = await loadTodayRoute(userId);
           const deliveries = route?.deliveries ?? [];
           if (isActive) {
+            setRouteId(route?.id ?? null);
             setRouteName(route?.name ?? DEFAULT_ROUTE_NAME);
             setSavedRouteName(route?.name ?? DEFAULT_ROUTE_NAME);
             setRouteStats({
@@ -52,13 +54,16 @@ export default function HomeScreen() {
           }
         } else if (isFirebaseConfigured) {
           if (isActive) {
+            setRouteId(null);
             setRouteName(DEFAULT_ROUTE_NAME);
             setSavedRouteName(DEFAULT_ROUTE_NAME);
             setRouteStats({ total: 0, delivered: 0, pending: 0, failed: 0 });
           }
         } else {
-          const [stops, name] = await Promise.all([loadStops(), loadLocalRouteName()]);
+          const localRouteId = await loadLocalRouteId();
+          const [stops, name] = await Promise.all([loadStops(localRouteId), loadLocalRouteName(localRouteId)]);
           if (isActive) {
+            setRouteId(localRouteId);
             setRouteName(name);
             setSavedRouteName(name);
             setRouteStats({
@@ -98,9 +103,9 @@ export default function HomeScreen() {
           setRouteName(savedRouteName);
           return;
         }
-        await updateTodayRouteName(currentUser.uid, cleanName);
+        await updateTodayRouteName(currentUser.uid, cleanName, routeId ?? undefined);
       } else {
-        await saveLocalRouteName(cleanName);
+        await saveLocalRouteName(cleanName, routeId ?? undefined);
       }
       setSavedRouteName(cleanName);
       setNameMessage('Nombre guardado');

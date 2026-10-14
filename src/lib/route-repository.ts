@@ -9,6 +9,7 @@ import {
   query,
   runTransaction,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
   writeBatch,
@@ -109,9 +110,21 @@ function getRouteRef(userId: string, routeId = getLocalDateKey()) {
 }
 
 export async function loadTodayRoute(userId: string): Promise<TodayRoute | null> {
-  const routeRef = getRouteRef(userId);
-  const routeSnapshot = await getDoc(routeRef);
-  if (!routeSnapshot.exists()) return null;
+  const today = getLocalDateKey();
+  const routesSnapshot = await getDocs(query(
+    collection(requireDb(), 'users', userId, 'routes'),
+    where('ownerId', '==', userId),
+    where('routeDate', '==', today),
+  ));
+  const todayRoutes = routesSnapshot.docs.sort((left, right) => {
+    const leftData = left.data();
+    const rightData = right.data();
+    if (leftData.status !== rightData.status) return leftData.status === 'active' ? -1 : 1;
+    return (timestampToMillis(rightData.createdAt) ?? 0) - (timestampToMillis(leftData.createdAt) ?? 0);
+  });
+  const routeSnapshot = todayRoutes[0];
+  if (!routeSnapshot) return null;
+  const routeRef = routeSnapshot.ref;
 
   const deliveriesQuery = query(
     collection(routeRef, 'deliveries'),
@@ -146,9 +159,28 @@ export async function loadTodayRoute(userId: string): Promise<TodayRoute | null>
   };
 }
 
-export async function markTodayRouteStarted(userId: string): Promise<number> {
+export async function createTodayRoute(userId: string): Promise<string> {
   const firestore = requireDb();
-  const routeRef = getRouteRef(userId);
+  const routeRef = doc(collection(firestore, 'users', userId, 'routes'));
+  const now = serverTimestamp();
+  await setDoc(routeRef, {
+    ownerId: userId,
+    routeDate: getLocalDateKey(),
+    routeName: DEFAULT_ROUTE_NAME,
+    status: 'active',
+    stopCount: 0,
+    nextSequence: 1,
+    startAddress: '',
+    endAddress: '',
+    createdAt: now,
+    updatedAt: now,
+  });
+  return routeRef.id;
+}
+
+export async function markTodayRouteStarted(userId: string, routeId?: string): Promise<number> {
+  const firestore = requireDb();
+  const routeRef = getRouteRef(userId, routeId);
   return runTransaction(firestore, async (transaction) => {
     const snapshot = await transaction.get(routeRef);
     if (!snapshot.exists()) throw new Error('route-not-found');
@@ -163,9 +195,9 @@ export async function markTodayRouteStarted(userId: string): Promise<number> {
   });
 }
 
-export async function completeTodayRoute(userId: string): Promise<void> {
+export async function completeTodayRoute(userId: string, routeId?: string): Promise<void> {
   const firestore = requireDb();
-  const routeRef = getRouteRef(userId);
+  const routeRef = getRouteRef(userId, routeId);
   await runTransaction(firestore, async (transaction) => {
     const snapshot = await transaction.get(routeRef);
     if (!snapshot.exists()) throw new Error('route-not-found');
@@ -194,10 +226,11 @@ export async function addDeliveryToTodayRoute(
   userId: string,
   address: string,
   details: { customerCount?: number; recordCount?: number; displayNumber?: string } = {},
+  routeId?: string,
 ): Promise<Delivery> {
   const firestore = requireDb();
-  const routeId = getLocalDateKey();
-  const routeRef = getRouteRef(userId, routeId);
+  const selectedRouteId = routeId ?? getLocalDateKey();
+  const routeRef = getRouteRef(userId, selectedRouteId);
   const deliveryRef = doc(collection(routeRef, 'deliveries'));
   const cleanAddress = address.trim();
   if (!cleanAddress || cleanAddress.length > 500) {
@@ -219,7 +252,7 @@ export async function addDeliveryToTodayRoute(
       ? routeData.nextSequence
       : currentCount + 1;
     const sequence = customSequence ?? nextSequence;
-    const routeDate = routeId;
+    const routeDate = getLocalDateKey();
     const timestamp = serverTimestamp();
 
     transaction.set(routeRef, {
@@ -267,9 +300,9 @@ export async function addDeliveryToTodayRoute(
   };
 }
 
-export async function incrementDeliveryRecordCount(userId: string, deliveryId: string): Promise<void> {
+export async function incrementDeliveryRecordCount(userId: string, deliveryId: string, routeId?: string): Promise<void> {
   const firestore = requireDb();
-  const deliveryRef = doc(collection(getRouteRef(userId), 'deliveries'), deliveryId);
+  const deliveryRef = doc(collection(getRouteRef(userId, routeId), 'deliveries'), deliveryId);
   await runTransaction(firestore, async (transaction) => {
     const snapshot = await transaction.get(deliveryRef);
     if (!snapshot.exists()) throw new Error('delivery-not-found');
@@ -281,8 +314,8 @@ export async function incrementDeliveryRecordCount(userId: string, deliveryId: s
   });
 }
 
-export async function updateDeliveryNote(userId: string, deliveryId: string, note: string): Promise<void> {
-  await updateDoc(doc(collection(getRouteRef(userId), 'deliveries'), deliveryId), {
+export async function updateDeliveryNote(userId: string, deliveryId: string, note: string, routeId?: string): Promise<void> {
+  await updateDoc(doc(collection(getRouteRef(userId, routeId), 'deliveries'), deliveryId), {
     note: note.trim().slice(0, 300),
     updatedAt: serverTimestamp(),
   });
@@ -291,12 +324,13 @@ export async function updateDeliveryNote(userId: string, deliveryId: string, not
 export async function updateDeliveryOrder(
   userId: string,
   orderedStops: Array<{ id: string; sequence: number; displayNumber: string }>,
+  routeId?: string,
 ): Promise<void> {
   const firestore = requireDb();
   for (let offset = 0; offset < orderedStops.length; offset += 400) {
     const batch = writeBatch(firestore);
     for (const stop of orderedStops.slice(offset, offset + 400)) {
-      batch.update(doc(collection(getRouteRef(userId), 'deliveries'), stop.id), {
+      batch.update(doc(collection(getRouteRef(userId, routeId), 'deliveries'), stop.id), {
         sequence: stop.sequence,
         displayNumber: stop.displayNumber,
         updatedAt: serverTimestamp(),
@@ -306,21 +340,20 @@ export async function updateDeliveryOrder(
   }
 }
 
-export async function updateTodayRouteName(userId: string, name: string): Promise<string> {
+export async function updateTodayRouteName(userId: string, name: string, routeId?: string): Promise<string> {
   const firestore = requireDb();
-  const routeId = getLocalDateKey();
-  const routeRef = getRouteRef(userId, routeId);
+  const selectedRouteId = routeId ?? getLocalDateKey();
+  const routeRef = getRouteRef(userId, selectedRouteId);
   const cleanName = name.trim().slice(0, 60) || DEFAULT_ROUTE_NAME;
   await runTransaction(firestore, async (transaction) => {
     const routeSnapshot = await transaction.get(routeRef);
     const routeData = routeSnapshot.exists() ? routeSnapshot.data() : null;
-    if (routeData?.status === 'completed') throw new Error('route-completed');
     const timestamp = serverTimestamp();
     transaction.set(routeRef, {
       ownerId: userId,
-      routeDate: routeId,
+      routeDate: getLocalDateKey(),
       routeName: cleanName,
-      status: 'active',
+      status: routeData?.status === 'completed' ? 'completed' : 'active',
       stopCount: typeof routeData?.stopCount === 'number' ? routeData.stopCount : 0,
       nextSequence: typeof routeData?.nextSequence === 'number' ? routeData.nextSequence : 1,
       startAddress: typeof routeData?.startAddress === 'string' ? routeData.startAddress : '',
@@ -341,9 +374,9 @@ export async function updateRouteName(userId: string, routeId: string, name: str
   return cleanName;
 }
 
-export async function removeDeliveryFromTodayRoute(userId: string, deliveryId: string): Promise<void> {
+export async function removeDeliveryFromTodayRoute(userId: string, deliveryId: string, routeId?: string): Promise<void> {
   const firestore = requireDb();
-  const routeRef = getRouteRef(userId);
+  const routeRef = getRouteRef(userId, routeId);
   const deliveryRef = doc(collection(routeRef, 'deliveries'), deliveryId);
 
   await runTransaction(firestore, async (transaction) => {
@@ -366,13 +399,14 @@ export async function updateDeliveryStatus(
   deliveryId: string,
   status: DeliveryStatus,
   failureReason: string | null = null,
+  routeId?: string,
 ): Promise<void> {
   if (status === 'failed' && !failureReason?.trim()) {
     throw new Error('failure-reason-required');
   }
 
   const deliveryRef = doc(
-    collection(getRouteRef(userId), 'deliveries'),
+    collection(getRouteRef(userId, routeId), 'deliveries'),
     deliveryId,
   );
   await updateDoc(deliveryRef, {

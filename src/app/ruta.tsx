@@ -6,9 +6,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Location from 'expo-location';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { addDeliveryToTodayRoute, completeTodayRoute, incrementDeliveryRecordCount, loadTodayRoute, markTodayRouteStarted, removeDeliveryFromTodayRoute, updateDeliveryNote, updateDeliveryOrder, updateDeliveryStatus, type Delivery } from '@/lib/route-repository';
+import { addDeliveryToTodayRoute, completeTodayRoute, createTodayRoute, incrementDeliveryRecordCount, loadTodayRoute, markTodayRouteStarted, removeDeliveryFromTodayRoute, updateDeliveryNote, updateDeliveryOrder, updateDeliveryStatus, type Delivery } from '@/lib/route-repository';
 import { auth, isFirebaseConfigured } from '@/lib/firebase';
-import { finishLocalRoute, loadLocalRouteTiming, loadStops, saveLocalRouteStartedAt, saveStops, type Stop } from '@/lib/stops';
+import { createLocalTodayRoute, finishLocalRoute, loadLocalRouteId, loadLocalRouteTiming, loadStops, saveLocalRouteStartedAt, saveStops, type Stop } from '@/lib/stops';
 import { normalizeDeliveryAddress, parseAddressRows, parseCsvAddresses, type ImportedAddress } from '@/lib/csv';
 import RouteMap from '@/components/route-map';
 import { clearNextStopNotification, prepareRouteNotifications, ROUTE_NOTIFICATION_ACTIONS, showNextStopNotification } from '@/lib/route-notifications';
@@ -18,6 +18,14 @@ import { useAppPreferences } from '@/lib/app-preferences';
 const colors = { ink: '#20352B', muted: '#718078', green: '#315E43', pale: '#F2F5EF', line: '#E5EAE3', white: '#FFFFFF', red: '#A14337' };
 type NavigationProvider = 'google' | 'waze' | 'inside';
 type RouteSummary = { elapsedMs: number; delivered: number; failed: number; pending: number };
+
+function describeOperationError(error: unknown) {
+  if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
+    return error.code;
+  }
+  if (error instanceof Error) return error.message.slice(0, 120);
+  return 'error-desconocido';
+}
 
 function formatElapsed(milliseconds: number) {
   const minutes = Math.max(0, Math.floor(milliseconds / 60_000));
@@ -36,6 +44,7 @@ export default function RouteScreen() {
   const [routeStarted, setRouteStarted] = useState(false);
   const [routeStartedAt, setRouteStartedAt] = useState<number | null>(null);
   const [routeFinished, setRouteFinished] = useState(false);
+  const [routeId, setRouteId] = useState<string | null>(null);
   const [stopListExpanded, setStopListExpanded] = useState(false);
   const [visitedStopsExpanded, setVisitedStopsExpanded] = useState(false);
   const [nextStopNotice, setNextStopNotice] = useState('');
@@ -90,8 +99,10 @@ export default function RouteScreen() {
     setStorageError('');
     try {
       if (!isFirebaseConfigured) {
-        const localStops = await loadStops();
-        const timing = await loadLocalRouteTiming();
+        const localRouteId = await loadLocalRouteId();
+        const localStops = await loadStops(localRouteId);
+        const timing = await loadLocalRouteTiming(localRouteId);
+        setRouteId(localRouteId);
         const loaded = localStops.map((stop, index) => ({
           id: stop.id, address: stop.address, sequence: stop.sequence ?? index + 1, displayNumber: stop.displayNumber ?? String(stop.sequence ?? index + 1),
           status: stop.status ?? 'pending', failureReason: stop.failureReason ?? null, proofPhotoUrl: null,
@@ -104,6 +115,7 @@ export default function RouteScreen() {
         setRouteStarted(Boolean(timing.startedAt && !timing.completedAt));
       } else if (currentUser) {
         const route = await loadTodayRoute(currentUser.uid);
+        setRouteId(route?.id ?? null);
         const loaded = route?.deliveries ?? [];
         setStops(loaded);
         setActiveStopId(loaded.find((stop) => stop.status === 'pending')?.id ?? null);
@@ -111,6 +123,7 @@ export default function RouteScreen() {
         setRouteFinished(route?.status === 'completed');
         setRouteStarted(Boolean(route?.startedAt && route.status !== 'completed'));
       } else {
+        setRouteId(null);
         setStops([]);
         setActiveStopId(null);
         setRouteStartedAt(null);
@@ -191,13 +204,13 @@ export default function RouteScreen() {
     return () => subscription.remove();
   }, [stops, busy, routeStarted, navigationProvider]);
 
-  async function persistLocal(nextStops: Delivery[]) {
+  async function persistLocal(nextStops: Delivery[], selectedRouteId = routeId ?? undefined) {
     const localStops: Stop[] = nextStops.map((stop) => ({
       id: stop.id, address: stop.address, createdAt: new Date().toISOString(), sequence: stop.sequence, displayNumber: stop.displayNumber,
       status: stop.status, failureReason: stop.failureReason, customerCount: stop.customerCount ?? 0,
       recordCount: stop.recordCount ?? 0, note: stop.note ?? '',
     }));
-    await saveStops(localStops);
+    await saveStops(localStops, selectedRouteId);
   }
 
   async function addStop() {
@@ -213,7 +226,7 @@ export default function RouteScreen() {
     try {
       if (existingAddress) {
         const next = stops.map((stop) => stop.id === existingAddress.id ? { ...stop, recordCount: Math.max(1, stop.recordCount ?? 0) + 1 } : stop);
-        if (isFirebaseConfigured && user) await incrementDeliveryRecordCount(user.uid, existingAddress.id);
+        if (isFirebaseConfigured && user) await incrementDeliveryRecordCount(user.uid, existingAddress.id, routeId ?? undefined);
         else if (isFirebaseConfigured) {
           setStorageError('Inicia sesión en Cuenta para guardar tus paradas en la nube.');
           return;
@@ -221,7 +234,7 @@ export default function RouteScreen() {
         setStops(next);
         setStorageError('La dirección ya estaba en tu ruta: agrupé este pedido en la misma parada.');
       } else if (isFirebaseConfigured && user) {
-        const created = await addDeliveryToTodayRoute(user.uid, trimmedAddress, { recordCount: 1 });
+        const created = await addDeliveryToTodayRoute(user.uid, trimmedAddress, { recordCount: 1 }, routeId ?? undefined);
         setStops((current) => [...current, created].sort((left, right) => left.sequence - right.sequence));
         if (!activeStopId && created.status === 'pending') setActiveStopId(created.id);
       } else if (isFirebaseConfigured) {
@@ -236,8 +249,15 @@ export default function RouteScreen() {
         if (!activeStopId) setActiveStopId(created.id);
       }
       setAddress('');
-    } catch {
-      setStorageError('No se pudo guardar la parada. Revisa tu conexión e inténtalo de nuevo.');
+    } catch (error) {
+      console.error('No se pudo guardar la parada:', error);
+      if (describeOperationError(error) === 'route-completed') {
+        setRouteStarted(false);
+        setRouteFinished(true);
+        setStorageError('Esta ruta ya terminó. Pulsa «Crear otra ruta hoy» para empezar una ruta vacía.');
+        return;
+      }
+      setStorageError(`No se pudo guardar la parada. Código: ${describeOperationError(error)}.`);
     } finally {
       setBusy(false);
     }
@@ -316,7 +336,7 @@ export default function RouteScreen() {
       let chooseActiveStop = !activeStopId;
       if (isFirebaseConfigured && user) {
         for (const item of importPreview) {
-          const created = await addDeliveryToTodayRoute(user.uid, item.address, item);
+          const created = await addDeliveryToTodayRoute(user.uid, item.address, item, routeId ?? undefined);
           setStops((current) => [...current, created].sort((left, right) => left.sequence - right.sequence));
           if (chooseActiveStop) {
             setActiveStopId(created.id);
@@ -343,8 +363,15 @@ export default function RouteScreen() {
         if (chooseActiveStop) setActiveStopId(imported[0]?.id ?? null);
       }
       setImportPreview(null);
-    } catch {
-      setStorageError('Algunas paradas podrían haberse importado antes del error. Revisa la ruta e inténtalo con las restantes.');
+    } catch (error) {
+      console.error('No se pudo completar la importación de paradas:', error);
+      if (describeOperationError(error) === 'route-completed') {
+        setRouteStarted(false);
+        setRouteFinished(true);
+        setStorageError('Esta ruta ya terminó. Pulsa «Crear otra ruta hoy» antes de importar la hoja.');
+        return;
+      }
+      setStorageError(`La importación se detuvo. Algunas paradas podrían haberse guardado. Código: ${describeOperationError(error)}.`);
     } finally {
       setBusy(false);
     }
@@ -356,7 +383,7 @@ export default function RouteScreen() {
     setStorageError('');
     try {
       const next = stops.filter((stop) => stop.id !== stopId);
-      if (isFirebaseConfigured && user) await removeDeliveryFromTodayRoute(user.uid, stopId);
+      if (isFirebaseConfigured && user) await removeDeliveryFromTodayRoute(user.uid, stopId, routeId ?? undefined);
       else await persistLocal(next);
       setStops(next);
       if (activeStopId === stopId) setActiveStopId(next.find((stop) => stop.status === 'pending')?.id ?? null);
@@ -379,7 +406,7 @@ export default function RouteScreen() {
     setBusy(true);
     try {
       const next = stops.map((item) => item.id === stop.id ? { ...item, status: 'delivered' as const, failureReason: null } : item);
-      if (isFirebaseConfigured && user) await updateDeliveryStatus(user.uid, stop.id, 'delivered');
+      if (isFirebaseConfigured && user) await updateDeliveryStatus(user.uid, stop.id, 'delivered', null, routeId ?? undefined);
       else await persistLocal(next);
       setStops(next);
       if (routeStarted && activeStopId === stop.id) {
@@ -405,7 +432,7 @@ export default function RouteScreen() {
     setBusy(true);
     try {
       const next = stops.map((item) => item.id === stop.id ? { ...item, status: 'failed' as const, failureReason: reason } : item);
-      if (isFirebaseConfigured && user) await updateDeliveryStatus(user.uid, stop.id, 'failed', reason);
+      if (isFirebaseConfigured && user) await updateDeliveryStatus(user.uid, stop.id, 'failed', reason, routeId ?? undefined);
       else await persistLocal(next);
       setStops(next);
       setFailureId(null);
@@ -435,7 +462,7 @@ export default function RouteScreen() {
     setBusy(true);
     try {
       const next = stops.map((item) => item.id === stop.id ? { ...item, status: 'pending' as const, failureReason: null } : item);
-      if (isFirebaseConfigured && user) await updateDeliveryStatus(user.uid, stop.id, 'pending');
+      if (isFirebaseConfigured && user) await updateDeliveryStatus(user.uid, stop.id, 'pending', null, routeId ?? undefined);
       else await persistLocal(next);
       setStops(next);
     } catch {
@@ -455,7 +482,7 @@ export default function RouteScreen() {
     try {
       const note = (stop.note ?? '').trim().slice(0, 300);
       const next = stops.map((item) => item.id === stopId ? { ...item, note } : item);
-      if (isFirebaseConfigured && user) await updateDeliveryNote(user.uid, stopId, note);
+      if (isFirebaseConfigured && user) await updateDeliveryNote(user.uid, stopId, note, routeId ?? undefined);
       else if (isFirebaseConfigured) {
         setStorageError('Inicia sesión en Cuenta para guardar la nota de esta parada.');
         return;
@@ -495,8 +522,8 @@ export default function RouteScreen() {
     try {
       const startedAt = Date.now();
       const persistedStartedAt = isFirebaseConfigured && user
-        ? await markTodayRouteStarted(user.uid)
-        : await saveLocalRouteStartedAt(startedAt);
+        ? await markTodayRouteStarted(user.uid, routeId ?? undefined)
+        : await saveLocalRouteStartedAt(startedAt, routeId ?? undefined);
       setRouteStartedAt(persistedStartedAt);
       setRouteFinished(false);
       setActiveStopId(firstPending.id);
@@ -515,9 +542,9 @@ export default function RouteScreen() {
     try {
       const completedAt = Date.now();
       const startedAt = routeStartedAt ?? completedAt;
-      if (isFirebaseConfigured && user) await completeTodayRoute(user.uid);
+      if (isFirebaseConfigured && user) await completeTodayRoute(user.uid, routeId ?? undefined);
       else if (isFirebaseConfigured) throw new Error('login-required');
-      else await finishLocalRoute(completedAt);
+      else await finishLocalRoute(completedAt, routeId ?? undefined);
 
       const summary = {
         elapsedMs: Math.max(0, completedAt - startedAt),
@@ -541,6 +568,34 @@ export default function RouteScreen() {
       ]).start();
     } catch {
       setStorageError('No se pudo terminar la ruta. Inténtalo de nuevo.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startAnotherRoute() {
+    if (busy || !routeFinished) return;
+    setBusy(true);
+    setStorageError('');
+    try {
+      const newRouteId = isFirebaseConfigured && user
+        ? await createTodayRoute(user.uid)
+        : await createLocalTodayRoute();
+      setRouteId(newRouteId);
+      setStops([]);
+      setActiveStopId(null);
+      setRouteStartedAt(null);
+      setRouteStarted(false);
+      setRouteFinished(false);
+      setImportPreview(null);
+      setRouteSummary(null);
+      setSummaryVisible(false);
+      setVisitedStopsExpanded(false);
+      setStopListExpanded(false);
+      setAddress('');
+    } catch (error) {
+      console.error('No se pudo crear otra ruta hoy:', error);
+      setStorageError(`No se pudo crear otra ruta. Código: ${describeOperationError(error)}.`);
     } finally {
       setBusy(false);
     }
@@ -647,7 +702,7 @@ export default function RouteScreen() {
     const ordered = ids.flatMap((id) => byId.has(id) ? [byId.get(id)!] : []);
     const next = ordered.map((stop, index) => ({ ...stop, sequence: index + 1, displayNumber: String(index + 1) }));
     try {
-      if (isFirebaseConfigured && user) await updateDeliveryOrder(user.uid, next.map(({ id, sequence, displayNumber: number }) => ({ id, sequence, displayNumber: number })));
+      if (isFirebaseConfigured && user) await updateDeliveryOrder(user.uid, next.map(({ id, sequence, displayNumber: number }) => ({ id, sequence, displayNumber: number })), routeId ?? undefined);
       else if (isFirebaseConfigured) {
         setStorageError('Inicia sesión para guardar el orden optimizado.');
         return;
@@ -728,7 +783,7 @@ export default function RouteScreen() {
         </View>}
 
         {isFirebaseConfigured && !user && <View style={styles.accountNotice}><Text style={styles.accountText}>Inicia sesión para guardar y consultar tus rutas en Firebase.</Text><Link href="/cuenta" asChild><Pressable><Text style={styles.accountLink}>Ir a Cuenta →</Text></Pressable></Link></View>}
-        {stops.length > 0 && <View style={styles.navigationCard}>
+        {(stops.length > 0 || routeFinished) && <View style={styles.navigationCard}>
           <Text style={styles.navigationTitle}>{routeFinished ? 'Ruta terminada' : routeStarted ? 'Ruta iniciada' : '¿Listo para salir?'}</Text>
           {!routeFinished && <Text style={styles.navigationHint}>Al entregar la parada activa, Connect avanzará a la siguiente.</Text>}
           {!routeFinished && <View style={styles.providerRow}>
@@ -736,6 +791,7 @@ export default function RouteScreen() {
           </View>}
           {!routeFinished && <Pressable style={styles.startButton} onPress={() => void startRoute()}><Text style={styles.startButtonText}>{routeStarted ? 'Reanudar navegación' : 'Iniciar ruta'}</Text></Pressable>}
           {routeFinished && <Text style={styles.finishedHint}>El resumen de esta jornada quedó guardado en Historial.</Text>}
+          {routeFinished && <Pressable style={styles.startButton} onPress={() => void startAnotherRoute()} disabled={busy}><Text style={styles.startButtonText}>{busy ? 'Creando ruta…' : '＋  Crear otra ruta hoy'}</Text></Pressable>}
         </View>}
         <View style={styles.listHeader}>
           <Text style={styles.listHeading}>{routeFinished ? 'Ruta cerrada' : 'Paradas de hoy'} <Text style={styles.stopCount}>{stops.length}</Text></Text>
