@@ -1,6 +1,7 @@
-import { Link, useFocusEffect, type Href } from 'expo-router';
+import { Link, useFocusEffect, useRouter, type Href } from 'expo-router';
+import { Image } from 'expo-image';
 import { onAuthStateChanged } from 'firebase/auth';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { DEFAULT_ROUTE_NAME, getLocalRouteDate, loadLocalRouteName, loadStops, saveLocalRouteName } from '@/lib/stops';
@@ -18,11 +19,19 @@ const colors = {
 };
 
 export default function HomeScreen() {
+  const router = useRouter();
   const [routeName, setRouteName] = useState(DEFAULT_ROUTE_NAME);
   const [savedRouteName, setSavedRouteName] = useState(DEFAULT_ROUTE_NAME);
   const [routeStats, setRouteStats] = useState({ total: 0, delivered: 0, pending: 0, failed: 0 });
   const [savingName, setSavingName] = useState(false);
   const [nameMessage, setNameMessage] = useState('');
+
+  useEffect(() => {
+    if (!auth || !isFirebaseConfigured) return;
+    return onAuthStateChanged(auth, (user) => {
+      if (!user || !user.emailVerified) router.replace('/cuenta');
+    });
+  }, [router]);
 
   useFocusEffect(useCallback(() => {
     let isActive = true;
@@ -111,7 +120,7 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
-          <View style={styles.brandMark}><Text style={styles.brandMarkText}>O</Text></View>
+          <Image source={require('../../assets/images/icon.png')} style={styles.brandMark} contentFit="contain" accessibilityLabel="Logo de Connect" />
           <View style={styles.brandCopy}>
             <Text style={styles.brandName}>Connect</Text>
             <Text style={styles.brandCaption}>RUTAS MÁS SIMPLES</Text>
@@ -123,11 +132,11 @@ export default function HomeScreen() {
           </Link>
         </View>
 
-        <Text style={styles.greeting}>Hola, conductor</Text>
-        <Text style={styles.subtitle}>Tu jornada empieza con una ruta bien organizada.</Text>
+        <Text style={styles.greeting}>{routeStats.total === 0 ? 'Nuevo día, conductor' : 'Tu ruta de hoy'}</Text>
+        <Text style={styles.subtitle}>{routeStats.total === 0 ? 'Prepara tu jornada y organiza las entregas.' : 'Sigue el avance de tus entregas de hoy.'}</Text>
 
         <View style={styles.routeCard}>
-          <Text style={styles.cardEyebrow}>RUTA DE HOY</Text>
+          <Text style={styles.cardEyebrow}>{routeStats.total === 0 ? 'NUEVA JORNADA' : 'RUTA DE HOY'}</Text>
           <Text style={styles.routeDate}>{dateLabel}</Text>
           <View style={styles.routeNameRow}>
             <TextInput
@@ -155,18 +164,18 @@ export default function HomeScreen() {
           <Text style={styles.emptyText}>{routeStats.total === 0 ? 'Todavía no tienes paradas en la ruta de hoy.' : 'Resumen actualizado al volver de tu ruta.'}</Text>
           <Link href={'/ruta' as Href} asChild>
             <Pressable style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
-              <Text style={styles.primaryButtonText}>{routeStats.total === 0 ? '＋  Crear mi ruta' : 'Ver ruta de hoy'}</Text>
+              <Text style={styles.primaryButtonText}>{routeStats.total === 0 ? '＋  Empezar nuevo día' : 'Ver ruta de hoy'}</Text>
             </Pressable>
           </Link>
         </View>
 
         <Text style={styles.sectionTitle}>Accesos rápidos</Text>
-        <Link href={'/ruta' as Href} asChild>
+        <Link href={'/historial' as Href} asChild>
           <Pressable style={({ pressed }) => [styles.actionCard, pressed && styles.pressed]}>
-            <View style={styles.actionIcon}><Text style={styles.actionIconText}>＋</Text></View>
+            <View style={styles.actionIcon}><Text style={styles.actionIconText}>↻</Text></View>
             <View style={styles.actionCopy}>
-              <Text style={styles.actionTitle}>Añadir paradas</Text>
-              <Text style={styles.actionDescription}>Prepara las direcciones de tu jornada</Text>
+              <Text style={styles.actionTitle}>Ver todas mis rutas</Text>
+              <Text style={styles.actionDescription}>Consulta y renombra tus jornadas anteriores</Text>
             </View>
             <Text style={styles.chevron}>›</Text>
           </Pressable>
@@ -193,8 +202,7 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.pale },
   content: { width: '100%', maxWidth: 560, alignSelf: 'center', padding: 22, paddingBottom: 116 },
   header: { flexDirection: 'row', alignItems: 'center', marginBottom: 30 },
-  brandMark: { width: 42, height: 42, borderRadius: 15, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' },
-  brandMarkText: { color: colors.white, fontSize: 23, fontWeight: '700' },
+  brandMark: { width: 42, height: 42, borderRadius: 15, backgroundColor: colors.green },
   brandCopy: { marginLeft: 11, flex: 1 },
   brandName: { color: colors.ink, fontSize: 16, fontWeight: '700', letterSpacing: 0.1 },
   brandCaption: { color: colors.muted, fontSize: 9, fontWeight: '700', letterSpacing: 1.4, marginTop: 3 },

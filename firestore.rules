@@ -19,13 +19,15 @@ service cloud.firestore {
     }
 
     match /users/{userId}/routes/{routeId} {
-      allow read: if signedInAs(userId) && resource.data.ownerId == userId;
+      // The route document may not exist yet at the start of a new day.
+      // The uid-scoped path is sufficient to authorize its owner to check it.
+      allow read: if signedInAs(userId);
 
       allow create: if signedInAs(userId)
         && request.resource.data.ownerId == userId
         && request.resource.data.keys().hasOnly([
           'ownerId', 'routeDate', 'routeName', 'status', 'stopCount', 'nextSequence',
-          'startAddress', 'endAddress', 'createdAt', 'updatedAt'
+          'startAddress', 'endAddress', 'createdAt', 'updatedAt', 'startedAt', 'completedAt'
         ])
         && request.resource.data.keys().hasAll([
           'ownerId', 'routeDate', 'routeName', 'status', 'stopCount', 'nextSequence',
@@ -56,8 +58,10 @@ service cloud.firestore {
             && request.resource.data.routeName.size() <= 60))
         && request.resource.data.keys().hasOnly([
           'ownerId', 'routeDate', 'routeName', 'status', 'stopCount', 'nextSequence',
-          'startAddress', 'endAddress', 'createdAt', 'updatedAt'
+          'startAddress', 'endAddress', 'createdAt', 'updatedAt', 'startedAt', 'completedAt'
         ])
+        && (!request.resource.data.keys().hasAny(['startedAt']) || request.resource.data.startedAt is timestamp)
+        && (!request.resource.data.keys().hasAny(['completedAt']) || request.resource.data.completedAt is timestamp)
         && request.resource.data.status in ['active', 'completed']
         && request.resource.data.stopCount is int
         && request.resource.data.stopCount >= 0
@@ -74,18 +78,29 @@ service cloud.firestore {
         allow create: if ownsRouteAfterWrite(userId, routeId)
           && request.resource.data.ownerId == userId
           && request.resource.data.keys().hasOnly([
-            'ownerId', 'address', 'sequence', 'status', 'failureReason',
-            'proofPhotoUrl', 'createdAt', 'updatedAt', 'deliveredAt'
+            'ownerId', 'address', 'packageCount', 'customerCount', 'recordCount', 'note', 'displayNumber',
+            'sequence', 'status', 'failureReason', 'proofPhotoUrl', 'createdAt', 'updatedAt', 'deliveredAt'
           ])
           && request.resource.data.keys().hasAll([
-            'ownerId', 'address', 'sequence', 'status', 'failureReason',
-            'proofPhotoUrl', 'createdAt', 'updatedAt', 'deliveredAt'
+            'ownerId', 'address', 'customerCount', 'recordCount', 'note', 'displayNumber', 'sequence', 'status',
+            'failureReason', 'proofPhotoUrl', 'createdAt', 'updatedAt', 'deliveredAt'
           ])
           && request.resource.data.address is string
           && request.resource.data.address.size() > 0
           && request.resource.data.address.size() <= 500
-          && request.resource.data.sequence is int
-          && request.resource.data.sequence >= 1
+          && request.resource.data.customerCount is int
+          && request.resource.data.customerCount >= 0
+          && request.resource.data.recordCount is int
+          && request.resource.data.recordCount >= 0
+          && request.resource.data.note is string
+          && request.resource.data.note.size() <= 300
+          && request.resource.data.displayNumber is string
+          && request.resource.data.displayNumber.size() <= 12
+          && request.resource.data.displayNumber.matches('^[0-9]+(\\.[0-9]+)?$')
+          && (!request.resource.data.keys().hasAny(['packageCount'])
+            || (request.resource.data.packageCount is int && request.resource.data.packageCount >= 1))
+          && request.resource.data.sequence is number
+          && request.resource.data.sequence > 0
           && request.resource.data.status == 'pending'
           && request.resource.data.failureReason == null
           && request.resource.data.proofPhotoUrl == null
@@ -97,11 +112,26 @@ service cloud.firestore {
           && resource.data.ownerId == userId
           && request.resource.data.ownerId == userId
           && request.resource.data.address == resource.data.address
-          && request.resource.data.sequence == resource.data.sequence
+          && ((!resource.data.keys().hasAny(['packageCount'])
+              && !request.resource.data.keys().hasAny(['packageCount']))
+            || request.resource.data.packageCount == resource.data.packageCount)
+          && ((!resource.data.keys().hasAny(['customerCount'])
+              && !request.resource.data.keys().hasAny(['customerCount']))
+            || request.resource.data.customerCount == resource.data.customerCount)
+          && (!request.resource.data.keys().hasAny(['recordCount'])
+            || (request.resource.data.recordCount is int && request.resource.data.recordCount >= 0))
+          && request.resource.data.sequence is number
+          && request.resource.data.sequence > 0
+          && (!request.resource.data.keys().hasAny(['displayNumber'])
+            || (request.resource.data.displayNumber is string
+              && request.resource.data.displayNumber.size() <= 12
+              && request.resource.data.displayNumber.matches('^[0-9]+(\\.[0-9]+)?$')))
           && request.resource.data.createdAt == resource.data.createdAt
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'status', 'failureReason', 'proofPhotoUrl', 'updatedAt', 'deliveredAt'
+            'status', 'failureReason', 'proofPhotoUrl', 'updatedAt', 'deliveredAt', 'note', 'sequence', 'displayNumber', 'recordCount'
           ])
+          && (!request.resource.data.keys().hasAny(['note'])
+            || (request.resource.data.note is string && request.resource.data.note.size() <= 300))
           && request.resource.data.status in ['pending', 'delivered', 'failed']
           && request.resource.data.updatedAt is timestamp
           && (request.resource.data.failureReason == null

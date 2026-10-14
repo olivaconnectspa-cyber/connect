@@ -46,25 +46,54 @@ function parseRows(content: string, delimiter: string): string[][] {
   return rows;
 }
 
-export function parseCsvAddresses(content: string): string[] {
+export type ImportedAddress = { address: string; customerCount: number; recordCount: number };
+
+export function normalizeDeliveryAddress(value: string) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeHeader(value: string) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().trim();
+}
+
+export function parseAddressRows(rows: string[][]): ImportedAddress[] {
+  if (rows.length === 0) return [];
+
+  const addressColumn = rows[0].findIndex((cell) => /direccion|domicilio|address|calle/.test(normalizeHeader(cell)));
+  const customerColumn = rows[0].findIndex((cell) => /cliente|nombre|customer|recipient|consignee|destinatario/.test(normalizeHeader(cell)));
+  const columnIndex = addressColumn >= 0 ? addressColumn : 0;
+  const firstDataRow = addressColumn >= 0 ? 1 : 0;
+  const uniqueAddresses = new Map<string, { address: string; recordCount: number; customers: Set<string> }>();
+
+  for (const row of rows.slice(firstDataRow)) {
+    const address = row[columnIndex]?.trim();
+    if (!address || /^(direccion|domicilio|address|calle)$/.test(normalizeHeader(address))) continue;
+    const normalized = normalizeDeliveryAddress(address);
+    const existing = uniqueAddresses.get(normalized);
+    const customer = customerColumn >= 0 ? row[customerColumn]?.trim() : '';
+    if (existing) {
+      existing.recordCount += 1;
+      if (customer) existing.customers.add(normalizeHeader(customer));
+    } else {
+      uniqueAddresses.set(normalized, {
+        address,
+        recordCount: 1,
+        customers: new Set(customer ? [normalizeHeader(customer)] : []),
+      });
+    }
+  }
+  return [...uniqueAddresses.values()].map(({ address, recordCount, customers }) => ({
+    address,
+    recordCount,
+    customerCount: customerColumn >= 0 ? customers.size : 0,
+  }));
+}
+
+export function parseCsvAddresses(content: string): ImportedAddress[] {
   const cleanContent = content.replace(/^\uFEFF/, '');
   const firstLine = cleanContent.split(/\r?\n/, 1)[0] ?? '';
   const delimiter = [',', ';', '\t'].sort(
     (left, right) => countDelimiters(firstLine, right) - countDelimiters(firstLine, left),
   )[0];
-  const rows = parseRows(cleanContent, delimiter);
-  if (rows.length === 0) return [];
-
-  const headerIndex = rows[0].findIndex((cell) => /direcci[oó]n|domicilio|address/i.test(cell));
-  const columnIndex = headerIndex >= 0 ? headerIndex : 0;
-  const firstDataRow = headerIndex >= 0 ? 1 : 0;
-  const uniqueAddresses = new Map<string, string>();
-
-  for (const row of rows.slice(firstDataRow)) {
-    const address = row[columnIndex]?.trim();
-    if (!address || /^(direcci[oó]n|domicilio|address)$/i.test(address)) continue;
-    const normalized = address.toLocaleLowerCase();
-    if (!uniqueAddresses.has(normalized)) uniqueAddresses.set(normalized, address);
-  }
-  return [...uniqueAddresses.values()];
+  return parseAddressRows(parseRows(cleanContent, delimiter));
 }

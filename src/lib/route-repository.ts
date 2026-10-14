@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -10,6 +11,7 @@ import {
   serverTimestamp,
   updateDoc,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { DEFAULT_ROUTE_NAME } from './stops';
@@ -19,6 +21,10 @@ export type DeliveryStatus = 'pending' | 'delivered' | 'failed';
 export type Delivery = {
   id: string;
   address: string;
+  customerCount: number;
+  recordCount: number;
+  note: string;
+  displayNumber: string;
   sequence: number;
   status: DeliveryStatus;
   failureReason: string | null;
@@ -31,7 +37,16 @@ export type TodayRoute = {
   name: string;
   status: 'active' | 'completed';
   deliveries: Delivery[];
+  startedAt: number | null;
+  completedAt: number | null;
 };
+
+function timestampToMillis(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (value && typeof value === 'object' && 'toMillis' in value && typeof value.toMillis === 'function') return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  return null;
+}
 
 export async function loadRouteHistory(userId: string): Promise<TodayRoute[]> {
   const routesQuery = query(
@@ -54,7 +69,11 @@ export async function loadRouteHistory(userId: string): Promise<TodayRoute[]> {
       return {
         id: deliverySnapshot.id,
         address: typeof data.address === 'string' ? data.address : '',
+        customerCount: typeof data.customerCount === 'number' && data.customerCount >= 0 ? data.customerCount : 0,
+        recordCount: typeof data.recordCount === 'number' && data.recordCount >= 0 ? data.recordCount : (typeof data.packageCount === 'number' && data.packageCount > 0 ? data.packageCount : 0),
+        note: typeof data.note === 'string' ? data.note : '',
         sequence: typeof data.sequence === 'number' ? data.sequence : 0,
+        displayNumber: typeof data.displayNumber === 'string' ? data.displayNumber : String(typeof data.sequence === 'number' ? data.sequence : 0),
         status: status === 'delivered' || status === 'failed' ? status : 'pending',
         failureReason: typeof data.failureReason === 'string' ? data.failureReason : null,
         proofPhotoUrl: typeof data.proofPhotoUrl === 'string' ? data.proofPhotoUrl : null,
@@ -66,6 +85,8 @@ export async function loadRouteHistory(userId: string): Promise<TodayRoute[]> {
       name: typeof routeData.routeName === 'string' ? routeData.routeName : DEFAULT_ROUTE_NAME,
       status: routeData.status === 'completed' ? 'completed' as const : 'active' as const,
       deliveries,
+      startedAt: timestampToMillis(routeData.startedAt),
+      completedAt: timestampToMillis(routeData.completedAt),
     };
   }));
 }
@@ -104,13 +125,19 @@ export async function loadTodayRoute(userId: string): Promise<TodayRoute | null>
     date: typeof routeData.routeDate === 'string' ? routeData.routeDate : routeSnapshot.id,
     name: typeof routeData.routeName === 'string' ? routeData.routeName : DEFAULT_ROUTE_NAME,
     status: routeData.status === 'completed' ? 'completed' : 'active',
+    startedAt: timestampToMillis(routeData.startedAt),
+    completedAt: timestampToMillis(routeData.completedAt),
     deliveries: deliveriesSnapshot.docs.map((deliverySnapshot) => {
       const deliveryData = deliverySnapshot.data();
       const status = deliveryData.status;
       return {
         id: deliverySnapshot.id,
         address: typeof deliveryData.address === 'string' ? deliveryData.address : '',
+        customerCount: typeof deliveryData.customerCount === 'number' && deliveryData.customerCount >= 0 ? deliveryData.customerCount : 0,
+        recordCount: typeof deliveryData.recordCount === 'number' && deliveryData.recordCount >= 0 ? deliveryData.recordCount : (typeof deliveryData.packageCount === 'number' && deliveryData.packageCount > 0 ? deliveryData.packageCount : 0),
+        note: typeof deliveryData.note === 'string' ? deliveryData.note : '',
         sequence: typeof deliveryData.sequence === 'number' ? deliveryData.sequence : 0,
+        displayNumber: typeof deliveryData.displayNumber === 'string' ? deliveryData.displayNumber : String(typeof deliveryData.sequence === 'number' ? deliveryData.sequence : 0),
         status: status === 'delivered' || status === 'failed' ? status : 'pending',
         failureReason: typeof deliveryData.failureReason === 'string' ? deliveryData.failureReason : null,
         proofPhotoUrl: typeof deliveryData.proofPhotoUrl === 'string' ? deliveryData.proofPhotoUrl : null,
@@ -119,7 +146,55 @@ export async function loadTodayRoute(userId: string): Promise<TodayRoute | null>
   };
 }
 
-export async function addDeliveryToTodayRoute(userId: string, address: string): Promise<Delivery> {
+export async function markTodayRouteStarted(userId: string): Promise<number> {
+  const firestore = requireDb();
+  const routeRef = getRouteRef(userId);
+  return runTransaction(firestore, async (transaction) => {
+    const snapshot = await transaction.get(routeRef);
+    if (!snapshot.exists()) throw new Error('route-not-found');
+    const routeData = snapshot.data();
+    if (routeData.status === 'completed') throw new Error('route-completed');
+    const startedAt = timestampToMillis(routeData.startedAt) ?? Date.now();
+    transaction.update(routeRef, {
+      startedAt: routeData.startedAt ?? serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    return startedAt;
+  });
+}
+
+export async function completeTodayRoute(userId: string): Promise<void> {
+  const firestore = requireDb();
+  const routeRef = getRouteRef(userId);
+  await runTransaction(firestore, async (transaction) => {
+    const snapshot = await transaction.get(routeRef);
+    if (!snapshot.exists()) throw new Error('route-not-found');
+    if (snapshot.data().status === 'completed') return;
+    transaction.update(routeRef, {
+      status: 'completed',
+      completedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  });
+}
+
+export async function deleteRouteHistory(userId: string, routeId: string): Promise<void> {
+  const firestore = requireDb();
+  const routeRef = getRouteRef(userId, routeId);
+  const deliveries = await getDocs(collection(routeRef, 'deliveries'));
+  for (let offset = 0; offset < deliveries.docs.length; offset += 450) {
+    const batch = writeBatch(firestore);
+    for (const delivery of deliveries.docs.slice(offset, offset + 450)) batch.delete(delivery.ref);
+    await batch.commit();
+  }
+  await deleteDoc(routeRef);
+}
+
+export async function addDeliveryToTodayRoute(
+  userId: string,
+  address: string,
+  details: { customerCount?: number; recordCount?: number; displayNumber?: string } = {},
+): Promise<Delivery> {
   const firestore = requireDb();
   const routeId = getLocalDateKey();
   const routeRef = getRouteRef(userId, routeId);
@@ -127,6 +202,11 @@ export async function addDeliveryToTodayRoute(userId: string, address: string): 
   const cleanAddress = address.trim();
   if (!cleanAddress || cleanAddress.length > 500) {
     throw new Error('invalid-address');
+  }
+  const displayNumber = details.displayNumber?.trim();
+  const customSequence = displayNumber ? Number(displayNumber) : null;
+  if (displayNumber && (!/^\d+(?:\.\d+)?$/.test(displayNumber) || !customSequence || !Number.isFinite(customSequence))) {
+    throw new Error('invalid-display-number');
   }
 
   const sequence = await runTransaction(firestore, async (transaction) => {
@@ -138,6 +218,7 @@ export async function addDeliveryToTodayRoute(userId: string, address: string): 
     const nextSequence = typeof routeData?.nextSequence === 'number'
       ? routeData.nextSequence
       : currentCount + 1;
+    const sequence = customSequence ?? nextSequence;
     const routeDate = routeId;
     const timestamp = serverTimestamp();
 
@@ -156,7 +237,11 @@ export async function addDeliveryToTodayRoute(userId: string, address: string): 
     transaction.set(deliveryRef, {
       ownerId: userId,
       address: cleanAddress,
-      sequence: nextSequence,
+      customerCount: Math.max(0, Math.floor(details.customerCount ?? 0)),
+      recordCount: Math.max(0, Math.floor(details.recordCount ?? 0)),
+      note: '',
+      sequence,
+      displayNumber: displayNumber ?? String(sequence),
       status: 'pending',
       failureReason: null,
       proofPhotoUrl: null,
@@ -165,17 +250,60 @@ export async function addDeliveryToTodayRoute(userId: string, address: string): 
       deliveredAt: null,
     });
 
-    return nextSequence;
+    return sequence;
   });
 
   return {
     id: deliveryRef.id,
     address: cleanAddress,
-    sequence,
+    customerCount: Math.max(0, Math.floor(details.customerCount ?? 0)),
+    recordCount: Math.max(0, Math.floor(details.recordCount ?? 0)),
+    note: '',
+    sequence: customSequence ?? sequence,
+    displayNumber: displayNumber ?? String(customSequence ?? sequence),
     status: 'pending',
     failureReason: null,
     proofPhotoUrl: null,
   };
+}
+
+export async function incrementDeliveryRecordCount(userId: string, deliveryId: string): Promise<void> {
+  const firestore = requireDb();
+  const deliveryRef = doc(collection(getRouteRef(userId), 'deliveries'), deliveryId);
+  await runTransaction(firestore, async (transaction) => {
+    const snapshot = await transaction.get(deliveryRef);
+    if (!snapshot.exists()) throw new Error('delivery-not-found');
+    const currentCount = typeof snapshot.data().recordCount === 'number' ? snapshot.data().recordCount : 0;
+    transaction.update(deliveryRef, {
+      recordCount: Math.max(1, currentCount) + 1,
+      updatedAt: serverTimestamp(),
+    });
+  });
+}
+
+export async function updateDeliveryNote(userId: string, deliveryId: string, note: string): Promise<void> {
+  await updateDoc(doc(collection(getRouteRef(userId), 'deliveries'), deliveryId), {
+    note: note.trim().slice(0, 300),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function updateDeliveryOrder(
+  userId: string,
+  orderedStops: Array<{ id: string; sequence: number; displayNumber: string }>,
+): Promise<void> {
+  const firestore = requireDb();
+  for (let offset = 0; offset < orderedStops.length; offset += 400) {
+    const batch = writeBatch(firestore);
+    for (const stop of orderedStops.slice(offset, offset + 400)) {
+      batch.update(doc(collection(getRouteRef(userId), 'deliveries'), stop.id), {
+        sequence: stop.sequence,
+        displayNumber: stop.displayNumber,
+        updatedAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
+  }
 }
 
 export async function updateTodayRouteName(userId: string, name: string): Promise<string> {
@@ -200,6 +328,15 @@ export async function updateTodayRouteName(userId: string, name: string): Promis
       createdAt: routeData?.createdAt ?? timestamp,
       updatedAt: timestamp,
     });
+  });
+  return cleanName;
+}
+
+export async function updateRouteName(userId: string, routeId: string, name: string): Promise<string> {
+  const cleanName = name.trim().slice(0, 60) || DEFAULT_ROUTE_NAME;
+  await updateDoc(doc(requireDb(), 'users', userId, 'routes', routeId), {
+    routeName: cleanName,
+    updatedAt: serverTimestamp(),
   });
   return cleanName;
 }

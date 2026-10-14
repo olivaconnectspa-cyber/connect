@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Link, useRouter } from 'expo-router';
+import { Image } from 'expo-image';
 import { onAuthStateChanged, reload, sendEmailVerification, type User } from 'firebase/auth';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,6 +22,7 @@ function getFriendlyError(error: unknown) {
 }
 
 export default function AccountScreen() {
+  const router = useRouter();
   const [user, setUser] = useState<User | null>(auth?.currentUser ?? null);
   const [mode, setMode] = useState<AccountMode>('login');
   const [email, setEmail] = useState('');
@@ -30,8 +33,11 @@ export default function AccountScreen() {
 
   useEffect(() => {
     if (!auth) return;
-    return onAuthStateChanged(auth, setUser);
-  }, []);
+    return onAuthStateChanged(auth, (nextUser) => {
+      setUser(nextUser);
+      if (nextUser?.emailVerified) router.replace('/');
+    });
+  }, [router]);
 
   async function submitAccount() {
     setMessage('');
@@ -46,8 +52,11 @@ export default function AccountScreen() {
         await registerWithEmail(email, password);
         setMessage('Cuenta creada. Revisa tu correo para verificarla.');
       } else {
-        await signInWithEmail(email, password);
-        setMessage('Sesión iniciada.');
+        const signedInUser = await signInWithEmail(email, password);
+        if (signedInUser.emailVerified) {
+          setMessage('Sesión iniciada.');
+          router.replace('/');
+        } else setMessage('Sesión iniciada. Verifica tu correo antes de empezar la ruta.');
       }
     } catch (error) {
       setErrorMessage(getFriendlyError(error));
@@ -64,7 +73,10 @@ export default function AccountScreen() {
     try {
       await reload(user);
       setUser(auth.currentUser);
-      setMessage(auth.currentUser?.emailVerified ? 'Correo verificado.' : 'Aún no aparece como verificado. Revisa tu bandeja de entrada.');
+      if (auth.currentUser?.emailVerified) {
+        setMessage('Correo verificado.');
+        router.replace('/');
+      } else setMessage('Aún no aparece como verificado. Revisa tu bandeja de entrada.');
     } catch (error) {
       setErrorMessage(getFriendlyError(error));
     } finally {
@@ -104,9 +116,13 @@ export default function AccountScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.brandRow}>
+          <Image source={require('../../assets/images/icon.png')} style={styles.brandLogo} contentFit="contain" />
+          <View><Text style={styles.brandName}>Connect</Text><Text style={styles.brandCaption}>RUTAS MÁS SIMPLES</Text></View>
+        </View>
         <Text style={styles.eyebrow}>TU ESPACIO</Text>
-        <Text style={styles.title}>Cuenta</Text>
-        <Text style={styles.subtitle}>Accede a tus rutas y entregas desde tu cuenta.</Text>
+        <Text style={styles.title}>{user ? 'Cuenta' : 'Inicia tu jornada'}</Text>
+        <Text style={styles.subtitle}>{user ? 'Accede a tus rutas y entregas desde tu cuenta.' : 'Inicia sesión o regístrate para organizar tus entregas.'}</Text>
 
         {!isFirebaseConfigured ? (
           <View style={styles.card}>
@@ -179,6 +195,8 @@ export default function AccountScreen() {
 
         {!!message && <Text style={styles.message}>{message}</Text>}
         {!!errorMessage && <Text style={styles.errorMessage}>{errorMessage}</Text>}
+        <Link href="/planes" asChild><Pressable style={styles.plansButton}><Text style={styles.plansIcon}>✦</Text><View style={styles.plansCopy}><Text style={styles.plansTitle}>Planes y suscripción</Text><Text style={styles.plansCaption}>Consulta Gratis y Connect Pro</Text></View><Text style={styles.plansArrow}>›</Text></Pressable></Link>
+        <Link href="/configuracion" asChild><Pressable style={styles.plansButton}><Text style={styles.plansIcon}>⚙</Text><View style={styles.plansCopy}><Text style={styles.plansTitle}>Configuración</Text><Text style={styles.plansCaption}>Mapa y apariencia de la app</Text></View><Text style={styles.plansArrow}>›</Text></Pressable></Link>
         <Text style={styles.privacyNote}>Tus rutas en la nube estarán asociadas a tu cuenta. Usa una contraseña distinta de la de otros servicios.</Text>
       </ScrollView>
     </SafeAreaView>
@@ -188,6 +206,10 @@ export default function AccountScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.pale },
   content: { width: '100%', maxWidth: 560, alignSelf: 'center', padding: 22, paddingBottom: 116, flexGrow: 1 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', marginTop: 18, marginBottom: 24 },
+  brandLogo: { width: 48, height: 48, borderRadius: 14, marginRight: 12 },
+  brandName: { color: colors.ink, fontSize: 19, fontWeight: '700' },
+  brandCaption: { color: colors.muted, fontSize: 9, fontWeight: '700', letterSpacing: 1.2, marginTop: 3 },
   eyebrow: { color: colors.green, fontSize: 10, fontWeight: '700', letterSpacing: 1.5, marginTop: 22 },
   title: { color: colors.ink, fontSize: 28, fontWeight: '700', marginTop: 7 },
   subtitle: { color: colors.muted, fontSize: 14, lineHeight: 21, marginTop: 8, marginBottom: 22 },
@@ -217,6 +239,12 @@ const styles = StyleSheet.create({
   buttonRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
   hint: { color: colors.muted, fontSize: 11, lineHeight: 17, marginTop: 13 },
   privacyNote: { color: colors.muted, fontSize: 11, lineHeight: 17, marginTop: 20, textAlign: 'center' },
+  plansButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.white, borderColor: colors.line, borderWidth: 1, borderRadius: 15, padding: 13, marginTop: 18 },
+  plansIcon: { color: colors.green, fontSize: 22, marginHorizontal: 8 },
+  plansCopy: { flex: 1, marginLeft: 8 },
+  plansTitle: { color: colors.ink, fontSize: 13, fontWeight: '700' },
+  plansCaption: { color: colors.muted, fontSize: 10, marginTop: 4 },
+  plansArrow: { color: colors.muted, fontSize: 23, marginHorizontal: 5 },
   message: { color: colors.green, fontSize: 12, lineHeight: 18, marginTop: 12, textAlign: 'center' },
   errorMessage: { color: colors.error, fontSize: 12, lineHeight: 18, marginTop: 12, textAlign: 'center' },
   disabledButton: { opacity: 0.6 },

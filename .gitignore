@@ -2,6 +2,9 @@
 
 # dependencies
 node_modules/
+.npm-cache/
+.firebase-cli-cache/
+.firebase-config/
 
 # Expo
 .expo/

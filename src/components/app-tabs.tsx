@@ -1,48 +1,117 @@
-import { Tabs, TabList, TabSlot, TabTrigger, type TabTriggerSlotProps } from 'expo-router/ui';
-import type { Href } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Tabs, type BottomTabBarProps } from 'expo-router/js-tabs';
+import { onAuthStateChanged } from 'firebase/auth';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { auth, isFirebaseConfigured } from '@/lib/firebase';
 
-const colors = { ink: '#20352B', muted: '#718078', green: '#315E43', line: '#E5EAE3', white: '#FFFFFF', selected: '#EAF1E8' };
+const colors = {
+  ink: '#20352B',
+  muted: '#718078',
+  green: '#315E43',
+  line: '#E5EAE3',
+  white: '#FFFFFF',
+  selected: '#EAF1E8',
+};
 
 export default function AppTabs() {
-  const insets = useSafeAreaInsets();
+  const [userReady, setUserReady] = useState(!auth);
+  const [isVerified, setIsVerified] = useState(false);
+
+  useEffect(() => {
+    if (!auth) return;
+    return onAuthStateChanged(auth, (user) => {
+      setIsVerified(Boolean(user?.emailVerified));
+      setUserReady(true);
+    });
+  }, []);
+
+  if (!userReady) return <View style={styles.loading}><ActivityIndicator color={colors.green} /><Text style={styles.loadingText}>Cargando Connect…</Text></View>;
+
   return (
-    <Tabs>
-      <TabSlot style={styles.slot} />
-      <TabList asChild>
-        <View style={[styles.barPosition, { bottom: Math.max(insets.bottom, 8) + 8 }]}>
-          <View style={styles.bar}>
-            <TabTrigger name="index" href="/" asChild><TabButton>Inicio</TabButton></TabTrigger>
-            <TabTrigger name="ruta" href={'/ruta' as Href} asChild><TabButton>Ruta</TabButton></TabTrigger>
-            <TabTrigger name="cuenta" href="/cuenta" asChild><TabButton>Cuenta</TabButton></TabTrigger>
-            <TabTrigger name="historial" href={'/historial' as Href} asChild><TabButton>Historial</TabButton></TabTrigger>
-          </View>
-        </View>
-      </TabList>
+    <Tabs
+      initialRouteName={isFirebaseConfigured && !isVerified ? 'cuenta' : 'index'}
+      tabBar={(props) => <FloatingTabBar {...props} accountOnly={isFirebaseConfigured && !isVerified} />}
+      screenOptions={{
+        headerShown: false,
+        tabBarShowLabel: false,
+      }}>
+      <Tabs.Screen name="index" options={{ title: 'Inicio' }} />
+      <Tabs.Screen name="ruta" options={{ title: 'Ruta' }} />
+      <Tabs.Screen name="historial" options={{ title: 'Historial' }} />
+      <Tabs.Screen name="cuenta" options={{ title: 'Cuenta' }} />
+      <Tabs.Screen name="planes" options={{ href: null }} />
+      <Tabs.Screen name="configuracion" options={{ href: null }} />
+      <Tabs.Screen name="explore" options={{ href: null }} />
     </Tabs>
   );
 }
 
-function TabButton({ children, isFocused, ...props }: TabTriggerSlotProps) {
+function FloatingTabBar({ state, descriptors, navigation, insets, accountOnly }: BottomTabBarProps & { accountOnly: boolean }) {
+  const visibleRoutes = state.routes.filter((route) => route.name !== 'explore' && route.name !== 'planes' && (!accountOnly || route.name === 'cuenta'));
+
+  return (
+    <View pointerEvents="box-none" style={[styles.barPosition, { bottom: Math.max(insets.bottom, 8) + 8 }]}>
+      <View style={styles.bar}>
+        {visibleRoutes.map((route) => {
+          const options = descriptors[route.key]?.options;
+          const focused = state.routes[state.index]?.key === route.key;
+          const label = typeof options?.tabBarLabel === 'string'
+            ? options.tabBarLabel
+            : options?.title ?? route.name;
+
+          return (
+            <TabButton
+              key={route.key}
+              label={label}
+              focused={focused}
+              onPress={() => {
+                const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+                if (!focused && !event.defaultPrevented) navigation.navigate(route.name, route.params);
+              }}
+            />
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function TabButton({ label, focused, onPress }: { label: string; focused: boolean; onPress: () => void }) {
+  const scale = useRef(new Animated.Value(focused ? 1 : 0.96)).current;
+
+  useEffect(() => {
+    Animated.spring(scale, {
+      toValue: focused ? 1 : 0.96,
+      useNativeDriver: true,
+      damping: 15,
+      stiffness: 180,
+    }).start();
+  }, [focused, scale]);
+
   return (
     <Pressable
-      {...props}
+      onPress={onPress}
+      onPressIn={() => Animated.spring(scale, { toValue: 0.92, useNativeDriver: true, damping: 14 }).start()}
+      onPressOut={() => Animated.spring(scale, { toValue: focused ? 1 : 0.96, useNativeDriver: true, damping: 14 }).start()}
       accessibilityRole="tab"
-      accessibilityState={{ selected: isFocused }}
-      style={({ pressed }) => [styles.tabButton, isFocused && styles.selectedTab, pressed && styles.pressed]}>
-      <Text style={[styles.tabText, isFocused && styles.selectedText]} numberOfLines={1}>{children}</Text>
+      accessibilityState={{ selected: focused }}
+      accessibilityLabel={label}
+      style={styles.tabHitArea}>
+      <Animated.View style={[styles.tabButton, focused && styles.selectedTab, { transform: [{ scale }] }]}>
+        <Text style={[styles.tabText, focused && styles.selectedText]} numberOfLines={1}>{label}</Text>
+      </Animated.View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  slot: { flex: 1 },
-  barPosition: { position: 'absolute', left: 0, right: 0, alignItems: 'center', paddingHorizontal: 12 },
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F2F5EF' },
+  loadingText: { color: colors.muted, fontSize: 12, marginTop: 12 },
+  barPosition: { position: 'absolute', left: 0, right: 0, alignItems: 'center', paddingHorizontal: 12, zIndex: 20, elevation: 12 },
   bar: { width: '100%', maxWidth: 560, flexDirection: 'row', justifyContent: 'space-around', backgroundColor: colors.white, borderColor: colors.line, borderWidth: 1, borderRadius: 18, padding: 5, elevation: 8, shadowColor: '#1D3226', shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
-  tabButton: { flex: 1, minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 13, paddingHorizontal: 3 },
+  tabHitArea: { flex: 1 },
+  tabButton: { minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 13, paddingHorizontal: 3 },
   selectedTab: { backgroundColor: colors.selected },
   tabText: { color: colors.muted, fontSize: 10, fontWeight: '600', textAlign: 'center' },
   selectedText: { color: colors.green, fontWeight: '700' },
-  pressed: { opacity: 0.72 },
 });
