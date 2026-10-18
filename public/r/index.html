@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#315e43" />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>Ruta compartida · Connect</title>
+    <style>
+      :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: #20352b; background: #f2f5ef; }
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 22px 14px 40px; }
+      main { width: 100%; max-width: 600px; margin: 0 auto; }
+      .brand { color: #315e43; font-weight: 800; letter-spacing: .12em; font-size: 11px; margin: 8px 0 24px; }
+      .card { background: white; border: 1px solid #e5eae3; border-radius: 20px; padding: 22px; box-shadow: 0 10px 30px #20352b0b; }
+      .eyebrow { color: #315e43; font-size: 10px; letter-spacing: .12em; font-weight: 800; }
+      h1 { margin: 7px 0 5px; font-size: 25px; line-height: 1.2; }
+      #summary { color: #718078; font-size: 13px; margin: 0 0 19px; line-height: 1.5; }
+      #open-app { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; border-radius: 11px; padding: 0 15px; background: #315e43; color: white; font-size: 13px; font-weight: 700; text-decoration: none; }
+      #app-hint { color: #718078; font-size: 11px; line-height: 1.5; margin: 8px 0 17px; }
+      #stops { display: grid; gap: 8px; }
+      .stop { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid #e5eae3; border-radius: 13px; }
+      .number { flex: none; min-width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; color: #315e43; background: #eaf1e8; font-size: 11px; font-weight: 800; }
+      .address { font-size: 13px; line-height: 1.45; font-weight: 650; overflow-wrap: anywhere; }
+      .contact { color: #20352b; font-size: 11px; line-height: 1.5; margin-top: 4px; }
+      .phone-link { color: #315e43; font-size: 11px; line-height: 1.5; margin: 4px 10px 0 0; font-weight: 750; text-decoration: none; }
+      .status { color: #718078; margin-top: 3px; font-size: 11px; }
+      .stop.delivered { background: #f1f8f0; border-color: #3e8b55; }
+      .stop.failed { background: #fff4f2; border-color: #b84035; }
+      .stop.failed .number { color: #a14337; background: #f9e7e3; }
+      .footer { text-align: center; color: #718078; font-size: 10px; margin: 15px 0 0; }
+      .error { color: #718078; line-height: 1.6; }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand">CONNECT</div>
+      <section id="card" class="card" aria-live="polite">
+        <div class="eyebrow">RUTA COMPARTIDA</div>
+        <h1 id="title">Cargando ruta…</h1>
+        <p id="summary">Consultando las paradas compartidas.</p>
+        <a id="open-app" href="#" hidden>Abrir en Connect</a>
+        <p id="app-hint" hidden>Si tienes Connect instalada, puedes abrir esta ruta en la app.</p>
+        <div id="stops"></div>
+        <p id="footer" class="footer" hidden>Enlace privado para quien lo reciba · vence en 7 días.</p>
+      </section>
+    </main>
+    <script type="module">
+      import { firebaseConfig } from '/r/firebase-config.js';
+      import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js';
+      import { doc, getDoc, getFirestore } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js';
+
+      const title = document.querySelector('#title');
+      const summary = document.querySelector('#summary');
+      const stopsElement = document.querySelector('#stops');
+      const openApp = document.querySelector('#open-app');
+      const appHint = document.querySelector('#app-hint');
+      const footer = document.querySelector('#footer');
+      const shareId = location.pathname.split('/').filter(Boolean).at(-1) || '';
+      const statusLabels = { pending: 'Por visitar', delivered: 'Entregada', failed: 'Fallida' };
+
+      function showError(message) {
+        title.textContent = 'Ruta no disponible';
+        summary.textContent = message;
+        stopsElement.replaceChildren();
+      }
+
+      try {
+        if (!/^[A-Za-z0-9_-]{10,40}$/.test(shareId)) throw new Error('El enlace está incompleto.');
+        const app = initializeApp(firebaseConfig);
+        const snapshot = await getDoc(doc(getFirestore(app), 'sharedRoutes', shareId));
+        if (!snapshot.exists()) throw new Error('El enlace venció o ya no está disponible.');
+        const route = snapshot.data();
+        if (!(route.expiresAt?.toDate instanceof Function) || route.expiresAt.toDate() <= new Date()) throw new Error('El enlace venció o ya no está disponible.');
+        if (typeof route.name !== 'string' || !Array.isArray(route.stops) || route.stops.length < 1 || route.stops.length > 100) throw new Error('El contenido de la ruta no es válido.');
+
+        title.textContent = route.name;
+        const stops = route.stops.filter((stop) => stop && typeof stop.address === 'string');
+        const pending = stops.filter((stop) => stop.status === 'pending').length;
+        const delivered = stops.filter((stop) => stop.status === 'delivered').length;
+        const failed = stops.filter((stop) => stop.status === 'failed').length;
+        summary.textContent = `${stops.length} paradas · ${pending} por visitar · ${delivered} entregadas · ${failed} fallidas`;
+        openApp.href = `connect://ruta-compartida?share=${encodeURIComponent(shareId)}`;
+        openApp.hidden = false;
+        appHint.hidden = false;
+        for (let index = 0; index < stops.length; index += 1) {
+          const stop = stops[index];
+          const card = document.createElement('article');
+          card.className = `stop ${stop.status === 'delivered' || stop.status === 'failed' ? stop.status : ''}`;
+          const number = document.createElement('div');
+          number.className = 'number';
+          number.textContent = String(stop.packageNumber || index + 1);
+          const copy = document.createElement('div');
+          const address = document.createElement('div');
+          address.className = 'address';
+          address.textContent = stop.address;
+          if (typeof stop.customerName === 'string' && stop.customerName.trim()) {
+            const customerName = document.createElement('div');
+            customerName.className = 'contact';
+            customerName.textContent = stop.customerName;
+            copy.append(customerName);
+          }
+          if (typeof stop.customerPhone === 'string' && stop.customerPhone.trim()) {
+            const phone = stop.customerPhone.slice(0, 30);
+            const phoneDigits = phone.replace(/\D/g, '');
+            if (phoneDigits) {
+              const call = document.createElement('a');
+              call.className = 'phone-link';
+              call.href = `tel:${phone.replace(/[^+\d]/g, '')}`;
+              call.textContent = `☎ ${phone}`;
+              copy.append(call);
+              const whatsapp = document.createElement('a');
+              whatsapp.className = 'phone-link';
+              whatsapp.href = `https://wa.me/${phoneDigits}`;
+              whatsapp.rel = 'noopener noreferrer';
+              whatsapp.target = '_blank';
+              whatsapp.textContent = 'WhatsApp';
+              copy.append(whatsapp);
+            }
+          }
+          const status = document.createElement('div');
+          status.className = 'status';
+          status.textContent = statusLabels[stop.status] || statusLabels.pending;
+          copy.prepend(address);
+          copy.append(status);
+          card.append(number, copy);
+          stopsElement.append(card);
+        }
+        footer.hidden = false;
+      } catch (error) {
+        showError(error instanceof Error ? error.message : 'No se pudo abrir el enlace.');
+      }
+    </script>
+  </body>
+</html>

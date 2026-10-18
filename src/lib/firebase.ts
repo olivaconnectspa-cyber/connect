@@ -7,6 +7,7 @@ import {
   type Auth,
 } from 'firebase/auth';
 import { getFirestore, type Firestore } from 'firebase/firestore';
+import { getStorage, type FirebaseStorage } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
@@ -27,6 +28,7 @@ export const isFirebaseConfigured = Boolean(
 let firebaseApp: FirebaseApp | null = null;
 let firebaseAuth: Auth | null = null;
 let firestore: Firestore | null = null;
+let firebaseStorage: FirebaseStorage | null = null;
 
 if (isFirebaseConfigured) {
   firebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -43,7 +45,9 @@ if (isFirebaseConfigured) {
   }
 
   firestore = getFirestore(firebaseApp);
+  firebaseStorage = getStorage(firebaseApp);
 }
 
 export const auth = firebaseAuth;
 export const db = firestore;
+export const storage = firebaseStorage;

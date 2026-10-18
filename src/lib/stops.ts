@@ -13,6 +13,8 @@ export type Stop = {
   packageCount?: number;
   status?: 'pending' | 'delivered' | 'failed';
   failureReason?: string | null;
+  customerPhone?: string;
+  customerName?: string;
 };
 
 const STOPS_STORAGE_KEY = '@oliva-connect/stops/v1';
@@ -20,6 +22,9 @@ const ROUTE_STORAGE_PREFIX = '@connect/routes/';
 const ROUTE_NAME_STORAGE_PREFIX = '@connect/route-names/';
 const ROUTE_TIMING_STORAGE_PREFIX = '@connect/route-timing/';
 const ACTIVE_ROUTE_STORAGE_PREFIX = '@connect/active-route/';
+const ROUTE_OPTIMIZED_PREFIX = '@connect/route-optimized/';
+const ROUTE_ENDPOINTS_PREFIX = '@connect/route-endpoints/';
+const ROUTE_FAVORITES_KEY = '@connect/route-favorites/v1';
 export const DEFAULT_ROUTE_NAME = 'Ruta del día';
 
 export type LocalRouteHistory = {
@@ -32,6 +37,8 @@ export type LocalRouteHistory = {
 };
 
 export type LocalRouteTiming = { startedAt: number | null; completedAt: number | null };
+export type LocalRouteEndpoints = { startAddress: string; endAddress: string; endAtLastStop: boolean };
+export type RouteFavorite = { id: string; label: string; address: string };
 
 export function getLocalRouteDate(date = new Date()): string {
   const year = date.getFullYear();
@@ -63,6 +70,7 @@ export async function createLocalTodayRoute(): Promise<string> {
   await AsyncStorage.setItem(routeStorageKey(routeId), JSON.stringify([]));
   await AsyncStorage.setItem(routeNameStorageKey(routeId), DEFAULT_ROUTE_NAME);
   await AsyncStorage.setItem(routeTimingStorageKey(routeId), JSON.stringify({ startedAt: null, completedAt: null }));
+  await saveLocalRouteEndpoints({ startAddress: '', endAddress: '', endAtLastStop: true }, routeId);
   return routeId;
 }
 
@@ -98,7 +106,7 @@ export async function finishLocalRoute(completedAt = Date.now(), routeId = getLo
 
 export async function deleteLocalRoute(routeId: string): Promise<void> {
   const date = routeId.slice(0, 10);
-  await AsyncStorage.multiRemove([routeStorageKey(routeId), routeNameStorageKey(routeId), routeTimingStorageKey(routeId)]);
+  await AsyncStorage.multiRemove([routeStorageKey(routeId), routeNameStorageKey(routeId), routeTimingStorageKey(routeId), `${ROUTE_OPTIMIZED_PREFIX}${routeId}`, `${ROUTE_ENDPOINTS_PREFIX}${routeId}`]);
   if (await AsyncStorage.getItem(`${ACTIVE_ROUTE_STORAGE_PREFIX}${date}`) === routeId) {
     await AsyncStorage.removeItem(`${ACTIVE_ROUTE_STORAGE_PREFIX}${date}`);
   }
@@ -106,6 +114,72 @@ export async function deleteLocalRoute(routeId: string): Promise<void> {
 
 export async function loadLocalRouteName(routeId = getLocalRouteDate()): Promise<string> {
   return (await AsyncStorage.getItem(routeNameStorageKey(routeId)))?.trim() || DEFAULT_ROUTE_NAME;
+}
+
+export async function loadLocalRouteOptimized(routeId = getLocalRouteDate()): Promise<boolean> {
+  return (await AsyncStorage.getItem(`${ROUTE_OPTIMIZED_PREFIX}${routeId}`)) === 'true';
+}
+
+export async function saveLocalRouteOptimized(optimized: boolean, routeId = getLocalRouteDate()): Promise<void> {
+  await AsyncStorage.setItem(`${ROUTE_OPTIMIZED_PREFIX}${routeId}`, String(optimized));
+}
+
+export async function loadLocalRouteEndpoints(routeId = getLocalRouteDate()): Promise<LocalRouteEndpoints> {
+  try {
+    const raw = await AsyncStorage.getItem(`${ROUTE_ENDPOINTS_PREFIX}${routeId}`);
+    if (!raw) return { startAddress: '', endAddress: '', endAtLastStop: true };
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== 'object') return { startAddress: '', endAddress: '', endAtLastStop: true };
+    const endpoints = value as Record<string, unknown>;
+    return {
+      startAddress: typeof endpoints.startAddress === 'string' ? endpoints.startAddress : '',
+      endAddress: typeof endpoints.endAddress === 'string' ? endpoints.endAddress : '',
+      endAtLastStop: endpoints.endAtLastStop !== false,
+    };
+  } catch {
+    return { startAddress: '', endAddress: '', endAtLastStop: true };
+  }
+}
+
+export async function saveLocalRouteEndpoints(endpoints: LocalRouteEndpoints, routeId = getLocalRouteDate()): Promise<void> {
+  await AsyncStorage.setItem(`${ROUTE_ENDPOINTS_PREFIX}${routeId}`, JSON.stringify({
+    startAddress: endpoints.startAddress.trim().slice(0, 500),
+    endAddress: endpoints.endAddress.trim().slice(0, 500),
+    endAtLastStop: endpoints.endAtLastStop,
+  }));
+}
+
+export async function loadRouteFavorites(): Promise<RouteFavorite[]> {
+  try {
+    const raw = await AsyncStorage.getItem(ROUTE_FAVORITES_KEY);
+    const value: unknown = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is RouteFavorite => Boolean(item && typeof item === 'object'
+      && 'id' in item && typeof item.id === 'string'
+      && 'label' in item && typeof item.label === 'string'
+      && 'address' in item && typeof item.address === 'string'));
+  } catch {
+    return [];
+  }
+}
+
+export async function saveRouteFavorite(label: string, address: string): Promise<RouteFavorite[]> {
+  const cleanLabel = label.trim().slice(0, 40);
+  const cleanAddress = address.trim().slice(0, 500);
+  if (!cleanLabel || !cleanAddress) throw new Error('favorite-label-and-address-required');
+  const current = await loadRouteFavorites();
+  const existing = current.find((favorite) => favorite.address.toLocaleLowerCase() === cleanAddress.toLocaleLowerCase());
+  const next = existing
+    ? current.map((favorite) => favorite.id === existing.id ? { ...favorite, label: cleanLabel } : favorite)
+    : [...current, { id: `${Date.now()}`, label: cleanLabel, address: cleanAddress }];
+  await AsyncStorage.setItem(ROUTE_FAVORITES_KEY, JSON.stringify(next));
+  return next;
+}
+
+export async function deleteRouteFavorite(favoriteId: string): Promise<RouteFavorite[]> {
+  const next = (await loadRouteFavorites()).filter((favorite) => favorite.id !== favoriteId);
+  await AsyncStorage.setItem(ROUTE_FAVORITES_KEY, JSON.stringify(next));
+  return next;
 }
 
 export async function saveLocalRouteName(name: string, routeId = getLocalRouteDate()): Promise<void> {

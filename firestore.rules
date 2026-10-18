@@ -27,7 +27,7 @@ service cloud.firestore {
         && request.resource.data.ownerId == userId
         && request.resource.data.keys().hasOnly([
           'ownerId', 'routeDate', 'routeName', 'status', 'stopCount', 'nextSequence',
-          'startAddress', 'endAddress', 'createdAt', 'updatedAt', 'startedAt', 'completedAt'
+          'startAddress', 'endAddress', 'endAtLastStop', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'isOptimized'
         ])
         && request.resource.data.keys().hasAll([
           'ownerId', 'routeDate', 'routeName', 'status', 'stopCount', 'nextSequence',
@@ -44,7 +44,9 @@ service cloud.firestore {
         && request.resource.data.nextSequence >= 1
         && request.resource.data.startAddress is string
         && request.resource.data.endAddress is string
+        && (!request.resource.data.keys().hasAny(['endAtLastStop']) || request.resource.data.endAtLastStop is bool)
         && request.resource.data.createdAt is timestamp
+        && (!request.resource.data.keys().hasAny(['isOptimized']) || request.resource.data.isOptimized is bool)
         && request.resource.data.updatedAt is timestamp;
 
       allow update: if signedInAs(userId)
@@ -58,10 +60,12 @@ service cloud.firestore {
             && request.resource.data.routeName.size() <= 60))
         && request.resource.data.keys().hasOnly([
           'ownerId', 'routeDate', 'routeName', 'status', 'stopCount', 'nextSequence',
-          'startAddress', 'endAddress', 'createdAt', 'updatedAt', 'startedAt', 'completedAt'
+          'startAddress', 'endAddress', 'endAtLastStop', 'createdAt', 'updatedAt', 'startedAt', 'completedAt', 'isOptimized'
         ])
         && (!request.resource.data.keys().hasAny(['startedAt']) || request.resource.data.startedAt is timestamp)
         && (!request.resource.data.keys().hasAny(['completedAt']) || request.resource.data.completedAt is timestamp)
+        && (!request.resource.data.keys().hasAny(['endAtLastStop']) || request.resource.data.endAtLastStop is bool)
+        && (!request.resource.data.keys().hasAny(['isOptimized']) || request.resource.data.isOptimized is bool)
         && request.resource.data.status in ['active', 'completed']
         && request.resource.data.stopCount is int
         && request.resource.data.stopCount >= 0
@@ -78,16 +82,20 @@ service cloud.firestore {
         allow create: if ownsRouteAfterWrite(userId, routeId)
           && request.resource.data.ownerId == userId
           && request.resource.data.keys().hasOnly([
-            'ownerId', 'address', 'packageCount', 'customerCount', 'recordCount', 'note', 'displayNumber',
+            'ownerId', 'address', 'customerPhone', 'customerName', 'packageCount', 'customerCount', 'recordCount', 'note', 'displayNumber',
             'sequence', 'status', 'failureReason', 'proofPhotoUrl', 'createdAt', 'updatedAt', 'deliveredAt'
           ])
           && request.resource.data.keys().hasAll([
-            'ownerId', 'address', 'customerCount', 'recordCount', 'note', 'displayNumber', 'sequence', 'status',
+            'ownerId', 'address', 'customerPhone', 'customerName', 'customerCount', 'recordCount', 'note', 'displayNumber', 'sequence', 'status',
             'failureReason', 'proofPhotoUrl', 'createdAt', 'updatedAt', 'deliveredAt'
           ])
           && request.resource.data.address is string
           && request.resource.data.address.size() > 0
           && request.resource.data.address.size() <= 500
+          && request.resource.data.customerPhone is string
+          && request.resource.data.customerPhone.size() <= 30
+          && request.resource.data.customerName is string
+          && request.resource.data.customerName.size() <= 200
           && request.resource.data.customerCount is int
           && request.resource.data.customerCount >= 0
           && request.resource.data.recordCount is int
@@ -112,6 +120,10 @@ service cloud.firestore {
           && resource.data.ownerId == userId
           && request.resource.data.ownerId == userId
           && request.resource.data.address == resource.data.address
+          && (!request.resource.data.keys().hasAny(['customerPhone'])
+            || (request.resource.data.customerPhone is string && request.resource.data.customerPhone.size() <= 30))
+          && (!request.resource.data.keys().hasAny(['customerName'])
+            || (request.resource.data.customerName is string && request.resource.data.customerName.size() <= 200))
           && ((!resource.data.keys().hasAny(['packageCount'])
               && !request.resource.data.keys().hasAny(['packageCount']))
             || request.resource.data.packageCount == resource.data.packageCount)
@@ -128,7 +140,7 @@ service cloud.firestore {
               && request.resource.data.displayNumber.matches('^[0-9]+(\\.[0-9]+)?$')))
           && request.resource.data.createdAt == resource.data.createdAt
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'status', 'failureReason', 'proofPhotoUrl', 'updatedAt', 'deliveredAt', 'note', 'sequence', 'displayNumber', 'recordCount'
+            'status', 'failureReason', 'proofPhotoUrl', 'updatedAt', 'deliveredAt', 'note', 'sequence', 'displayNumber', 'recordCount', 'customerPhone', 'customerName'
           ])
           && (!request.resource.data.keys().hasAny(['note'])
             || (request.resource.data.note is string && request.resource.data.note.size() <= 300))
@@ -141,8 +153,9 @@ service cloud.firestore {
             || (request.resource.data.proofPhotoUrl is string
               && request.resource.data.proofPhotoUrl.size() <= 2048))
           && ((request.resource.data.status == 'failed'
-              && request.resource.data.failureReason is string
-              && request.resource.data.failureReason.size() > 0
+              && (request.resource.data.failureReason == null
+                || (request.resource.data.failureReason is string
+                  && request.resource.data.failureReason.size() > 0))
               && request.resource.data.deliveredAt == null)
             || (request.resource.data.status == 'delivered'
               && request.resource.data.failureReason == null
@@ -154,6 +167,100 @@ service cloud.firestore {
         allow delete: if ownsRoute(userId, routeId)
           && resource.data.ownerId == userId;
       }
+    }
+
+    match /communityAddresses/{addressId} {
+      allow read: if request.auth != null;
+
+      // A contributor can create the initial, unverified directory entry only.
+      // Credibility and the photo lock are updated by a trusted moderation backend.
+      allow create: if request.auth != null
+        && request.auth.token.email_verified == true
+        && request.resource.data.keys().hasOnly([
+          'canonicalAddress', 'address', 'credibilityPercent', 'photosLocked', 'parkingType', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.canonicalAddress is string
+        && request.resource.data.canonicalAddress.size() > 0
+        && request.resource.data.canonicalAddress.size() <= 500
+        && request.resource.data.address is string
+        && request.resource.data.address.size() > 0
+        && request.resource.data.address.size() <= 500
+        && request.resource.data.credibilityPercent == 0
+        && request.resource.data.photosLocked == false
+        && request.resource.data.parkingType == 'unknown'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if request.auth != null
+        && request.auth.token.email_verified == true
+        && (resource.data.parkingType == 'unknown' || !resource.data.keys().hasAny(['parkingType']))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parkingType', 'updatedAt'])
+        && request.resource.data.parkingType in ['street', 'visitor', 'private', 'none']
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+
+      match /contributions/{contributionId} {
+        allow read: if request.auth != null
+          && (resource.data.status == 'approved' || resource.data.uid == request.auth.uid);
+        allow create: if request.auth != null
+          && request.auth.token.email_verified == true
+          && contributionId == request.auth.uid
+          && get(/databases/$(database)/documents/communityAddresses/$(addressId)).data.credibilityPercent < 90
+          && get(/databases/$(database)/documents/communityAddresses/$(addressId)).data.photosLocked == false
+          && request.resource.data.keys().hasOnly([
+            'uid', 'storagePath', 'status', 'latitude', 'longitude', 'accuracyMeters', 'createdAt'
+          ])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.storagePath == 'community/' + addressId + '/' + request.auth.uid + '/photo.jpg'
+          && request.resource.data.status == 'pending'
+          && (request.resource.data.latitude == null || request.resource.data.latitude is number)
+          && (request.resource.data.longitude == null || request.resource.data.longitude is number)
+          && (request.resource.data.accuracyMeters == null || request.resource.data.accuracyMeters is number)
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /comments/{commentId} {
+        allow read: if request.auth != null
+          && (resource.data.uid == request.auth.uid
+            || (resource.data.status == 'active' && resource.data.expiresAt > request.time));
+        allow create: if request.auth != null
+          && request.auth.token.email_verified == true
+          && request.resource.data.keys().hasOnly(['uid', 'text', 'status', 'createdAt', 'expiresAt'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 280
+          && request.resource.data.status == 'active'
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.expiresAt is timestamp
+          && request.resource.data.expiresAt > request.time
+          && request.resource.data.expiresAt <= request.time + duration.value(30, 'd');
+        allow update, delete: if false;
+      }
+    }
+
+    match /sharedRoutes/{shareId} {
+      // Anyone with the unguessable link can view this read-only snapshot until it expires.
+      allow get: if resource.data.expiresAt is timestamp
+        && resource.data.expiresAt > request.time;
+      allow list: if false;
+      allow create: if request.auth != null
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.keys().hasOnly(['ownerId', 'name', 'stops', 'isOptimized', 'createdAt', 'expiresAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 60
+        && request.resource.data.isOptimized == true
+        && request.resource.data.stops is list
+        && request.resource.data.stops.size() > 0
+        && request.resource.data.stops.size() <= 100
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(7, 'd');
+      allow update: if false;
+      allow delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
     }
 
     match /{document=**} {

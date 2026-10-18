@@ -1,0 +1,22 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /community/{addressId}/{userId}/photo.jpg {
+      allow read: if request.auth != null
+        && (request.auth.uid == userId
+          || firestore.get(/databases/(default)/documents/communityAddresses/$(addressId)/contributions/$(userId)).data.status == 'approved');
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && request.auth.token.email_verified == true
+        && resource == null
+        && request.resource != null
+        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*')
+        && firestore.get(/databases/(default)/documents/communityAddresses/$(addressId)).data.credibilityPercent < 90
+        && firestore.get(/databases/(default)/documents/communityAddresses/$(addressId)).data.photosLocked == false;
+      allow delete: if request.auth != null
+        && request.auth.uid == userId
+        && firestore.get(/databases/(default)/documents/communityAddresses/$(addressId)/contributions/$(userId)).data.status == 'pending';
+    }
+  }
+}

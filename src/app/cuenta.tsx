@@ -1,14 +1,30 @@
 import { useEffect, useState } from 'react';
 import { Link, useRouter } from 'expo-router';
 import { Image } from 'expo-image';
-import { onAuthStateChanged, reload, sendEmailVerification, type User } from 'firebase/auth';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { GoogleAuthProvider, onAuthStateChanged, reload, sendEmailVerification, signInWithCredential, type User } from 'firebase/auth';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useColorScheme, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { isRunningInExpoGo } from 'expo';
+import * as WebBrowser from 'expo-web-browser';
+import { useIdTokenAuthRequest } from 'expo-auth-session/providers/google';
 import { auth, isFirebaseConfigured } from '@/lib/firebase';
 import { registerWithEmail, signInWithEmail, signOutAccount } from '@/lib/auth';
+import { useAppPreferences, type MapPreference, type ThemePreference } from '@/lib/app-preferences';
+import { ThemeLayer } from '@/components/theme-layer';
 
 const colors = { ink: '#20352B', muted: '#718078', green: '#315E43', pale: '#F2F5EF', line: '#E5EAE3', white: '#FFFFFF', error: '#A14337' };
 type AccountMode = 'login' | 'register';
+WebBrowser.maybeCompleteAuthSession();
+const mapChoices: { id: MapPreference; title: string; detail: string }[] = [
+  { id: 'inside', title: 'Mapa integrado', detail: 'Ver la ruta y sus paradas dentro de Connect.' },
+  { id: 'google', title: 'Google Maps', detail: 'Abrir cada parada en Google Maps.' },
+  { id: 'waze', title: 'Waze', detail: 'Abrir cada parada en Waze.' },
+];
+const themeChoices: { id: ThemePreference; title: string }[] = [
+  { id: 'system', title: 'Automático' },
+  { id: 'light', title: 'Claro' },
+  { id: 'dark', title: 'Oscuro' },
+];
 
 function getFriendlyError(error: unknown) {
   const code = (error as { code?: string })?.code;
@@ -18,11 +34,33 @@ function getFriendlyError(error: unknown) {
   if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') return 'El correo o la contraseña no son correctos.';
   if (code === 'auth/too-many-requests') return 'Hubo demasiados intentos. Espera un momento y vuelve a probar.';
   if (code === 'auth/network-request-failed') return 'No se pudo conectar. Revisa tu conexión a internet.';
+  if (code === 'auth/operation-not-allowed') return 'Activa el proveedor de Google en Firebase Authentication.';
   return 'No se pudo completar la operación. Inténtalo de nuevo.';
 }
 
 export default function AccountScreen() {
   const router = useRouter();
+  const googleIds = {
+    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+  };
+  const activeGoogleClientId = Platform.select({ android: googleIds.androidClientId, ios: googleIds.iosClientId, default: googleIds.webClientId });
+  const googleConfigured = Boolean(activeGoogleClientId);
+  const [googleRequest, googleResponse, promptGoogle] = useIdTokenAuthRequest({
+    ...googleIds,
+    webClientId: googleIds.webClientId || 'google-web-client-not-configured',
+    androidClientId: googleIds.androidClientId || 'google-android-client-not-configured',
+    iosClientId: googleIds.iosClientId || 'google-ios-client-not-configured',
+    selectAccount: true,
+    language: 'es',
+  }, { scheme: 'connect', path: 'auth' });
+  const systemScheme = useColorScheme();
+  const { theme, map, setTheme, setMap } = useAppPreferences();
+  const dark = theme === 'dark' || (theme === 'system' && systemScheme === 'dark');
+  const preferenceColors = dark
+    ? { card: '#1C2921', text: '#E7EFE9', muted: '#A8B8AD', line: '#34453A', selected: '#2A4534', accent: '#A6D2B1' }
+    : { card: colors.white, text: colors.ink, muted: colors.muted, line: colors.line, selected: '#EAF1E8', accent: colors.green };
   const [user, setUser] = useState<User | null>(auth?.currentUser ?? null);
   const [mode, setMode] = useState<AccountMode>('login');
   const [email, setEmail] = useState('');
@@ -38,6 +76,57 @@ export default function AccountScreen() {
       if (nextUser?.emailVerified) router.replace('/');
     });
   }, [router]);
+
+  useEffect(() => {
+    if (googleResponse?.type !== 'success') {
+      if (googleResponse?.type === 'error') setErrorMessage('Google no pudo iniciar sesión. Revisa los clientes OAuth configurados.');
+      return;
+    }
+    const idToken = googleResponse.authentication?.idToken ?? googleResponse.params?.id_token;
+    if (!auth || !idToken) {
+      setErrorMessage('Google no entregó un token de acceso. Revisa la configuración OAuth.');
+      return;
+    }
+    setBusy(true);
+    setErrorMessage('');
+    void signInWithCredential(auth, GoogleAuthProvider.credential(idToken))
+      .then(({ user: googleUser }) => {
+        setUser(googleUser);
+        if (googleUser.emailVerified) router.replace('/');
+        else setMessage('Sesión iniciada. Verifica tu correo antes de empezar la ruta.');
+      })
+      .catch((error: unknown) => setErrorMessage(getFriendlyError(error)))
+      .finally(() => setBusy(false));
+  }, [googleResponse, router]);
+
+  async function signInWithGoogle() {
+    setMessage('');
+    setErrorMessage('');
+    if (!googleConfigured) {
+      setErrorMessage('Faltan los clientes OAuth de Google en el archivo .env.');
+      return;
+    }
+    if (!auth) {
+      setErrorMessage('Conecta Firebase antes de iniciar sesión con Google.');
+      return;
+    }
+    if (!googleRequest) {
+      setErrorMessage('Google todavía está preparando el inicio de sesión. Inténtalo en unos segundos.');
+      return;
+    }
+    if (isRunningInExpoGo()) {
+      setErrorMessage('Google requiere una compilación de desarrollo de Connect; Expo Go no puede completar el regreso desde Google.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await promptGoogle();
+    } catch (error) {
+      setErrorMessage(getFriendlyError(error));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submitAccount() {
     setMessage('');
@@ -114,7 +203,7 @@ export default function AccountScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <ThemeLayer><SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View style={styles.brandRow}>
           <Image source={require('../../assets/images/icon.png')} style={styles.brandLogo} contentFit="contain" />
@@ -189,6 +278,10 @@ export default function AccountScreen() {
             <Pressable style={[styles.primaryButton, busy && styles.disabledButton]} onPress={submitAccount} disabled={busy}>
               <Text style={styles.primaryButtonText}>{busy ? 'Un momento…' : mode === 'register' ? 'Crear cuenta' : 'Iniciar sesión'}</Text>
             </Pressable>
+            <View style={styles.loginDivider}><View style={styles.loginDividerLine} /><Text style={styles.loginDividerText}>O CONTINÚA CON</Text><View style={styles.loginDividerLine} /></View>
+            <Pressable style={[styles.googleButton, (busy || !googleRequest) && styles.disabledButton]} onPress={() => void signInWithGoogle()} disabled={busy || !googleRequest}>
+              <Text style={styles.googleMark}>G</Text><Text style={styles.googleButtonText}>{busy ? 'Un momento…' : !googleRequest ? 'Preparando Google…' : 'Continuar con Google'}</Text>
+            </Pressable>
             {mode === 'register' && <Text style={styles.hint}>Te enviaremos un correo para confirmar tu dirección.</Text>}
           </View>
         )}
@@ -196,10 +289,22 @@ export default function AccountScreen() {
         {!!message && <Text style={styles.message}>{message}</Text>}
         {!!errorMessage && <Text style={styles.errorMessage}>{errorMessage}</Text>}
         <Link href="/planes" asChild><Pressable style={styles.plansButton}><Text style={styles.plansIcon}>✦</Text><View style={styles.plansCopy}><Text style={styles.plansTitle}>Planes y suscripción</Text><Text style={styles.plansCaption}>Consulta Gratis y Connect Pro</Text></View><Text style={styles.plansArrow}>›</Text></Pressable></Link>
-        <Link href="/configuracion" asChild><Pressable style={styles.plansButton}><Text style={styles.plansIcon}>⚙</Text><View style={styles.plansCopy}><Text style={styles.plansTitle}>Configuración</Text><Text style={styles.plansCaption}>Mapa y apariencia de la app</Text></View><Text style={styles.plansArrow}>›</Text></Pressable></Link>
+        {user && <View style={[styles.preferencesCard, { backgroundColor: preferenceColors.card, borderColor: preferenceColors.line }]}>
+          <Text style={[styles.preferencesTitle, { color: preferenceColors.text }]}>Configuración</Text>
+          <Text style={[styles.preferencesCaption, { color: preferenceColors.muted }]}>Ajusta Connect desde esta misma sección.</Text>
+          <Text style={[styles.preferenceLabel, { color: preferenceColors.muted }]}>MAPA PARA NAVEGAR</Text>
+          {mapChoices.map((choice) => <Pressable key={choice.id} onPress={() => void setMap(choice.id)} style={[styles.preferenceOption, map === choice.id && { backgroundColor: preferenceColors.selected }]}>
+            <View style={[styles.preferenceRadio, { borderColor: preferenceColors.accent }]}>{map === choice.id && <View style={[styles.preferenceRadioDot, { backgroundColor: preferenceColors.accent }]} />}</View>
+            <View style={styles.preferenceCopy}><Text style={[styles.preferenceOptionTitle, { color: preferenceColors.text }]}>{choice.title}</Text><Text style={[styles.preferenceDetail, { color: preferenceColors.muted }]}>{choice.detail}</Text></View>
+          </Pressable>)}
+          <Text style={[styles.preferenceLabel, { color: preferenceColors.muted }]}>TEMA DE LA APP</Text>
+          <View style={[styles.themeRow, { backgroundColor: dark ? '#111A15' : colors.pale }]}>{themeChoices.map((choice) => <Pressable key={choice.id} onPress={() => void setTheme(choice.id)} style={[styles.themeChoice, theme === choice.id && { backgroundColor: preferenceColors.selected }]}>
+            <Text style={[styles.themeChoiceText, { color: theme === choice.id ? preferenceColors.text : preferenceColors.muted }]}>{choice.title}</Text>
+          </Pressable>)}</View>
+        </View>}
         <Text style={styles.privacyNote}>Tus rutas en la nube estarán asociadas a tu cuenta. Usa una contraseña distinta de la de otros servicios.</Text>
       </ScrollView>
-    </SafeAreaView>
+    </SafeAreaView></ThemeLayer>
   );
 }
 
@@ -232,6 +337,12 @@ const styles = StyleSheet.create({
   input: { minHeight: 46, color: colors.ink, fontSize: 14, borderBottomWidth: 1, borderBottomColor: colors.line, marginBottom: 7 },
   primaryButton: { minHeight: 49, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.green, borderRadius: 14, marginTop: 19 },
   primaryButtonText: { color: colors.white, fontSize: 14, fontWeight: '700' },
+  loginDivider: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 17 },
+  loginDividerLine: { flex: 1, height: 1, backgroundColor: colors.line },
+  loginDividerText: { color: colors.muted, fontSize: 9, fontWeight: '700', letterSpacing: 0.8 },
+  googleButton: { minHeight: 47, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderWidth: 1, borderColor: colors.line, borderRadius: 14, backgroundColor: colors.white, marginTop: 12 },
+  googleMark: { color: '#4285F4', fontSize: 17, fontWeight: '800' },
+  googleButtonText: { color: colors.ink, fontSize: 13, fontWeight: '700' },
   outlineButton: { minHeight: 47, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.line, borderRadius: 14, marginTop: 18 },
   outlineButtonText: { color: colors.ink, fontSize: 13, fontWeight: '600' },
   secondaryButton: { flex: 1, minHeight: 42, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.line, borderRadius: 12, paddingHorizontal: 7 },
@@ -245,6 +356,19 @@ const styles = StyleSheet.create({
   plansTitle: { color: colors.ink, fontSize: 13, fontWeight: '700' },
   plansCaption: { color: colors.muted, fontSize: 10, marginTop: 4 },
   plansArrow: { color: colors.muted, fontSize: 23, marginHorizontal: 5 },
+  preferencesCard: { borderWidth: 1, borderRadius: 18, padding: 16, marginTop: 18 },
+  preferencesTitle: { fontSize: 16, fontWeight: '700' },
+  preferencesCaption: { fontSize: 11, lineHeight: 16, marginTop: 4, marginBottom: 12 },
+  preferenceLabel: { fontSize: 9, fontWeight: '700', letterSpacing: 1.1, marginTop: 9, marginBottom: 5 },
+  preferenceOption: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, padding: 9 },
+  preferenceRadio: { width: 18, height: 18, borderWidth: 2, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  preferenceRadioDot: { width: 8, height: 8, borderRadius: 4 },
+  preferenceCopy: { flex: 1 },
+  preferenceOptionTitle: { fontSize: 12, fontWeight: '700' },
+  preferenceDetail: { fontSize: 10, lineHeight: 14, marginTop: 2 },
+  themeRow: { flexDirection: 'row', padding: 4, borderRadius: 12, marginTop: 3 },
+  themeChoice: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: 9 },
+  themeChoiceText: { fontSize: 10, fontWeight: '600' },
   message: { color: colors.green, fontSize: 12, lineHeight: 18, marginTop: 12, textAlign: 'center' },
   errorMessage: { color: colors.error, fontSize: 12, lineHeight: 18, marginTop: 12, textAlign: 'center' },
   disabledButton: { opacity: 0.6 },

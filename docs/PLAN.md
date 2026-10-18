@@ -106,8 +106,12 @@ Crear una app móvil para repartidores que organice rutas y entregas, y que inco
 - La eliminación de una parada pide confirmación y el cambio de estado ofrece la acción «Deshacer».
 - Inicio enlaza al historial completo. Cada ruta del historial muestra un nombre editable para el control del repartidor.
 - La pestaña futura de Aportes mostrará el desglose por mes y el avance diario hacia 10 domicilios comunitarios con aporte aprobado; todavía depende de implementar la base y moderación comunitarias.
+- Inicio y Ruta muestran el flujo visual de tres pasos inspirado en Circuit (añadir paradas, optimizar y navegar) con la paleta verde de Connect; Circuit no está integrado.
+- Datos de direcciones ya tiene una pantalla para consultar la credibilidad, tomar o elegir una foto comunitaria, adjuntar GPS opcional y dejar comentarios visibles por 30 días. Los aportes requieren correo verificado; la pantalla de fotos es independiente del estado Entregada/Fallida.
+- Las fotos comunitarias se guardan como pendientes y Storage/Firestore tienen reglas preparadas para limitar archivos a 10 MB, permitir un aporte por cuenta y domicilio, y bloquear nuevas fotos si el documento de dirección alcanza 90 %. Aún falta desplegar estas reglas, habilitar Storage en la consola y crear la moderación confiable que apruebe fotos y actualice la credibilidad.
+- Los comentarios llevan fecha de expiración y la pantalla filtra los vencidos; la eliminación física automática necesita activar TTL en Firebase. Las recompensas de días Pro todavía no están implementadas.
 - Git está inicializado en la rama `main`; todavía falta enlazar un repositorio remoto de GitHub.
-- Faltan fotos comunitarias, teléfono verificado por SMS/WhatsApp, optimización vial real, funciones comunitarias, suscripciones, recompensas y pagos. La recompensa por fotos debe estar disponible desde las paradas de cada ruta diaria y contar únicamente aportes comunitarios validados, no fotos de comprobante.
+- Faltan moderación de aportes, teléfono verificado por SMS/WhatsApp, optimización vial real, suscripciones, recompensas y pagos. La recompensa por fotos debe estar disponible desde las paradas de cada ruta diaria y contar únicamente aportes comunitarios validados, no fotos de comprobante.
 - Falta compartir una ruta diaria mediante un enlace universal revocable y de solo lectura, con redirección a la tienda cuando Connect no está instalada.
 
 La preparación de Firebase y sus pasos de configuración están en [FIREBASE_SETUP.md](FIREBASE_SETUP.md).

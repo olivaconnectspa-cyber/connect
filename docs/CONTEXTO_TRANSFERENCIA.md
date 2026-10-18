@@ -1,61 +1,107 @@
-# Oliva Connect — contexto para continuar en otra cuenta
+# Connect — resumen de traspaso del proyecto
 
-Fecha del resumen: 13 de octubre de 2026
+Actualizado: 17 de octubre de 2026
 
-## Cómo abrir el proyecto
+Este documento reúne el objetivo, las decisiones de producto, el estado técnico y el siguiente trabajo acordado en la conversación. Es un resumen para retomar el proyecto; no reproduce literalmente cada mensaje.
 
-- Proyecto local: `C:\Users\jojo\Documents\Codex\OlivaConnect\app`
-- Repositorio GitHub: `https://github.com/olivaconnectspa-cyber/connect`
-- Abrir la carpeta `app` en Visual Studio Code. El proyecto es React Native con Expo y TypeScript; no usar Flutter.
-- Para iniciar Expo desde la terminal de VS Code: `npm.cmd start -- --tunnel`. Escanear el QR con Expo Go.
+## 1. Dónde está el proyecto
 
-## Objetivo de la aplicación
-
-Connect es una app móvil para repartidores. La idea es crear, optimizar y completar rutas diarias, importar direcciones desde Excel/CSV, registrar entregas y compartir una ruta preparada con otro chofer. A futuro se quiere publicar en Play Store y App Store.
-
-## Decisiones y necesidades acordadas
-
-- La app es móvil con React Native + Expo, desarrollada desde Visual Studio Code y guardada en GitHub.
-- Firebase se usa para autenticación y almacenamiento en la nube.
-- El repartidor puede añadir domicilios manualmente o importar `.xlsx`, `.xls` y `.csv`.
-- Al repetir una dirección se agrupan los pedidos; el conductor anota en la parada cuántos paquetes debe bajar.
-- La ruta diaria registra estados pendiente, entregada o fallida, motivo de fallo, notas y progreso.
-- El mapa integrado debe quedar encima del recuadro para añadir una parada e importar archivos.
-- Cada parada debe tener un botón «Navegar» que use el mapa seleccionado o centre esa parada en el mapa integrado.
-- La optimización debe quedar accesible junto a la lista; debe ordenar las paradas antes de iniciar la ruta.
-- Compartir ruta: un conductor crea y optimiza la ruta una sola vez, y comparte un enlace para que otro chofer abra esa misma ruta y su orden, sin volver a cargar las direcciones ni anotar de nuevo los paquetes. El enlace debe dar acceso solo a esa ruta compartida; no al historial ni a las demás rutas del dueño. La función de compartir aún no está implementada.
-- El primer acceso debe permitir registro/inicio de sesión; después se quiere añadir acceso con Google y verificación de teléfono. La distribución final será por tiendas móviles.
-
-## Cambios hechos en este trabajo
-
-- En `src/app/ruta.tsx` se movió el componente del mapa integrado para que aparezca encima de la tarjeta de añadir/importar paradas.
-- Se añadió «Navegar a esta parada» en las tarjetas. En mapa integrado selecciona la parada y vuelve al mapa; con Google Maps o Waze abre esa dirección.
-- Se añadió «Optimizar orden de paradas» junto a la lista. Ubica las direcciones y ofrece un orden aproximado por distancia en línea recta antes de guardar.
-- Al terminar una ruta, las paradas pendientes quedan como solo consulta: ya no se pueden marcar, editar ni eliminar. Las paradas entregadas/fallidas se agrupan y quedan plegadas inicialmente.
-- Durante una ruta con «Mapa integrado», `src/app/ruta.tsx` muestra una pantalla de navegación: mapa ampliado, dirección de la parada activa, avance como «3 de 20», botones Entregada/Fallida y acceso a una lista agrupada que se abre como panel. Las visitadas se pueden plegar.
-- Al registrar una entrega o fallo, aparece un aviso animado con el número de la siguiente parada. La selección de una parada también centra el mapa en ella.
-- `src/components/route-map.tsx` admite el modo ampliado y oculta controles de búsqueda para dejar más espacio al mapa durante la navegación.
-- `app.config.js` queda preparado para leer claves de Google Maps desde variables de entorno. Verificado: falta `EXPO_PUBLIC_GOOGLE_MAPS_ANDROID_API_KEY` en `.env`; por eso el mapa integrado puede mostrar fondo negro. Configurar una clave de Google Maps y crear un build nativo/de desarrollo para que se aplique el plugin. Refrescar JavaScript en Expo Go no instala una clave nativa.
-- `firestore.rules` ya contiene cambios locales para que cada usuario consulte su ruta bajo su propio UID aunque la ruta del día todavía no exista, y para aceptar los campos de paradas que la app usa al guardar/importar.
-- Si Metro avisa que no pudo leer su caché (`Unable to deserialize cloned data`), detener Expo con `Ctrl+C` y volver a iniciarlo desde `app` con `npx.cmd expo start --clear`. El mensaje dice que Metro intentará reconstruir la caché; no es por sí mismo un error del código de la app.
-- Los cambios recientes de navegación y cierre de ruta están guardados en el proyecto local. No se han subido a GitHub ni se han probado en el teléfono en esta sesión.
-
-## Estado actual y próximo paso urgente
-
-- El usuario informó que pulsó **Publish** para las reglas de Firestore. Aún falta probar en Connect que se puedan guardar una parada manual y una importación Excel/CSV.
+- Carpeta de la app: `C:\Users\jojo\Documents\Codex\OlivaConnect\app`
+- Abrir esa carpeta en Visual Studio Code.
+- App móvil hecha con React Native, Expo y TypeScript. El trabajo activo está en VS Code; FlutterFlow quedó atrás.
 - Proyecto Firebase: `oliva-connect-cybmzx`.
-- Si siguen errores en Firebase, comprobar que se publicó el borrador correcto en Firestore → Rules. Las reglas son para rutas propias por UID; no otorgan acceso a las rutas de otras cuentas ni implementan el enlace compartido.
-- Waze no está instalado en el teléfono; al elegirlo, Android ofrece descargarlo. Google Maps puede usarse como alternativa.
-- El mapa integrado sigue pendiente de configurar. El permiso GPS no reemplaza la clave de Google Maps SDK; crear/configurar la clave, añadirla al entorno local y generar un development build antes de comprobar las calles. Restringir la clave al identificador y certificado de la app.
-- Si aún falla, copiar el mensaje completo de Expo Go y revisar las reglas activas, la sesión autenticada y los campos concretos que intenta guardar.
+- Nombre visible actual: **Connect**. El nombre puede cambiar antes de publicar.
+- Para iniciar Expo desde PowerShell en la carpeta `app`: `npm.cmd start -- --clear`. Escanear el QR con Expo Go. Detener con `Ctrl+C`.
+- Hay cambios locales sin confirmar/subir a GitHub. El remoto anotado en el traspaso previo era `https://github.com/olivaconnectspa-cyber/connect`; confirmar con `git remote -v` antes de sincronizar. Revisar `git status -sb`; no asumir que el remoto contiene el estado actual.
 
-## Siguientes tareas de desarrollo
+## 2. Qué busca resolver Connect
 
-1. Confirmar que las reglas publicadas permiten guardar e importar paradas con el esquema actual.
-2. Implementar compartir una ruta específica con enlace seguro y pantalla de apertura en Connect. Debe incluir el orden optimizado y la información de paquetes necesaria, sin exponer otras rutas. Definir si el otro chofer puede marcar entregas en la ruta compartida o solo consultarla.
-3. Preparar enlaces que abran la app instalada y, cuando estén disponibles, dirijan a Play Store/App Store si no está instalada.
-4. Seguir con autenticación, verificación de correo/teléfono y preparación de builds de tienda.
+Una herramienta para conductores y repartidores que reciben rutas con decenas de entregas. Debe facilitar la carga y orden de paradas, ayudar a seguir la ruta, conservar el control de paquetes y mejorar la información de acceso y estacionamiento en domicilios.
 
-## Seguridad
+La experiencia se inspira en el flujo sencillo de Circuit —añadir, optimizar y navegar—, pero Connect mantiene su propio diseño y paleta verde. Circuit no se integra ni se copia como servicio.
 
-No copiar a otra cuenta contraseñas, códigos de verificación, tokens, claves privadas ni valores secretos de `.env`. Si se vuelve a necesitar Firebase, usar la sesión de Console del propietario o iniciar sesión por el flujo oficial.
+## 3. Decisiones de producto acordadas
+
+### Rutas, paradas y entregas
+
+- Admitir direcciones manuales y hojas Excel/CSV; agrupar registros de un mismo domicilio cuando corresponde y preservar los datos de cliente/paquete.
+- Optimizar una ruta antes de empezar a registrar estados. **Entregada** y **Fallida** deben permanecer deshabilitados hasta que la optimización se complete.
+- El orden de paradas y el número que el chofer anota en el paquete tienen que coincidir. Agregar una parada después de optimizar necesita un flujo futuro que la inserte cerca del punto adecuado sin volver a ordenar los paquetes ya identificados.
+- Marcar Entregada o Fallida no debe depender de una foto. La foto es opcional y nunca debe bloquear el avance.
+- Una entrega fallida ofrece motivo: se puede escribir y guardar o continuar sin motivo, según el flujo configurado.
+- Entregas guardadas pasan a Visitadas. Los estados Entregada/Fallida usan colores verdes/rojos; una parada seleccionada se resalta en azul.
+- Mostrar el nombre/teléfono si se importaron o agregaron; permitir llamar y abrir WhatsApp cuando haya teléfono.
+- Navegación prevista: mapa integrado, Google Maps o Waze. Compartir solo cuando la ruta esté optimizada.
+- Al compartir con otro conductor se entrega una copia/ruta independiente para ese conductor; no sincronizar los estados entre choferes. Cada uno marca solo las entregas que asume.
+
+### Fotos y datos comunitarios
+
+- Desde una entrega marcada como Entregada, ofrecer aportar una foto del acceso/estacionamiento, si esa dirección aún acepta fotos.
+- Al aceptar, abrir **Datos de direcciones → Aporta una foto**, con la dirección de la parada actual cargada y abrir la cámara. No usar la primera dirección de la lista por defecto.
+- Antes de subir, exigir correo verificado, Firebase Storage, permiso de ubicación, precisión GPS adecuada y cercanía a la dirección (radio actual: 150 m; precisión máxima actual: 80 m). La entrega permanece guardada aunque se cancele o falle el aporte.
+- El mismo apartado de Direcciones queda como alternativa manual si el chofer omitió la foto al entregar.
+- No preguntar por fotos a domicilios con credibilidad de 90 % o más; permitir comentarios cuando las fotos estén bloqueadas.
+- Las fotos se guardan pendientes de revisión. La credibilidad y el premio no cambian hasta aprobación/moderación confiable. El cliente no debe poder aprobar sus propios aportes.
+- Comentarios vencen a los 30 días; la eliminación automática requiere configurar TTL en Firebase.
+- Fotos comunitarias no son lo mismo que una foto de comprobante de entrega.
+
+### Gratis, Pro y recompensas (para una etapa posterior)
+
+- La versión Gratis debe seguir siendo atractiva y permitir el flujo de entrega. La limitación acordada es optimizar hasta 10 paradas; más de 10 invita a probar Pro. No debe impedir marcar estados de entregas individuales.
+- Pro ofrece rutas sin límite y funciones comunitarias; se consideran suscripciones semanal y mensual.
+- Se conversó regalar 2 días Pro tras registro/verificación y 1 día adicional por 10 fotos comunitarias válidas en una jornada; contar solo fotos aprobadas, de domicilios por debajo del 90 %, sin duplicar dirección.
+- Suscripciones, cobros y recompensas se dejan para el final. No presentar estos incentivos como funcionales hasta implementar servidor/moderación y validación antifraude.
+
+## 4. Estado técnico conocido
+
+- La app contiene Inicio, Ruta, Historial, Cuenta, Planes, Direcciones y vista de ruta compartida.
+- Firebase Authentication, Firestore y Storage se usan/preparan para cuentas, rutas y aportes. Las reglas locales están en `firestore.rules` y `storage.rules`; **no asumir que las reglas actuales ya están publicadas en la consola**.
+- Un intento de importar paradas mostró `permission-denied` de Firestore al escribir la ruta y una entrega. El usuario hizo login en Firebase CLI, pero hace falta verificar el borrador publicado de reglas y volver a probar una cuenta autenticada.
+- Las reglas y el código han cambiado varias veces. Revisar el error actual en pantalla/terminal antes de concluir que es un problema de permisos.
+- Se añadió inicio de sesión Google; las dependencias `expo-auth-session` y `expo-crypto` se alinearon con Expo SDK 57 después de que una versión Expo 58 rompiera Metro con `expo/internal/bundle-origin`.
+- Expo Go no completa el retorno OAuth de Google en una app propia; para probar el login Google se necesita configurar IDs OAuth y crear un development build. No incluir valores secretos ni compartir `.env`.
+- La clave Android de Google Maps sigue pendiente; por eso el mapa integrado puede verse negro. La integración/configuración completa de Google Maps se reservó para el final.
+- El orden actual de optimización es aproximado por cercanía en línea recta, no usa calles ni tráfico. La optimización vial real queda pendiente.
+- El sitio HTTPS de ruta compartida y su página web existen localmente; revisar `docs/FIREBASE_SETUP.md` antes de desplegar. Los enlaces incluyen datos de la ruta que puede consultar quien tenga el enlace; confirmar el alcance de nombres/teléfonos antes de usar con clientes reales.
+- Los datos de prueba/rutas locales pueden perderse al limpiar almacenamiento o reinstalar Expo Go; no usar Expo Go como única copia de rutas reales.
+
+## 5. Cambios de la sesión actual (a probar en el teléfono)
+
+- Después de Entregada, la opción **Aportar foto** abre la cámara desde el apartado comunitario con la dirección actual precargada; el GPS se valida al enviar. Si la dirección está verificada al 90 % o falla GPS, no se sube.
+- Entregada/Fallida están bloqueados hasta optimizar la ruta; la misma regla protege las acciones provenientes de la notificación.
+- Al guardar un estado aparece el aviso **Marcaste entregada** o **Marcaste fallida**; en la ruta en curso puede incluir la siguiente parada.
+- La lista abierta desde **Paradas** en la navegación ahora tiene pestañas **Por visitar**, **Visitadas** y **Todas**. Seleccionar una fila no cierra el panel; la fila se destaca en azul y el botón **X** lo cierra. Seleccionar una pendiente también actualiza la parada activa.
+- La selección de una parada en la lista principal/mapa debe resaltar en azul.
+- Se reservó espacio al pie de la pantalla de navegación para que la barra flotante no tape los botones Entregada/Fallida.
+- Verificación de este estado: `npx.cmd tsc --noEmit` y `git diff --check` pasaron. Todavía no se verificó la interacción visual en el dispositivo del usuario.
+
+## 6. Próximo paso al retomar
+
+1. Iniciar Expo y recargar la app en el teléfono.
+2. Optimizar una ruta de prueba. Confirmar que antes de optimizar no se habiliten Entregada/Fallida y después sí.
+3. Iniciar con mapa integrado; comprobar que Entregada/Fallida queden visibles por encima de la barra inferior.
+4. Abrir **Paradas**, probar las tres pestañas, seleccionar varias paradas incluidas visitadas, comprobar el borde azul y cerrar solo con **X**. Verificar que una pendiente seleccionada se muestre como parada activa.
+5. Marcar una entrega de prueba: comprobar el aviso, que el prompt de foto no afecte el estado, que la cámara abra para el domicilio correcto y que el GPS rechace una ubicación distante.
+6. Repetir una importación Firestore si persiste el error de permisos: recoger el `Código:` exacto y contrastarlo con las reglas desplegadas.
+7. Dejar integración final de Google Maps, suscripciones y pagos para la etapa acordada.
+
+## 7. Comandos útiles
+
+En PowerShell, desde `C:\Users\jojo\Documents\Codex\OlivaConnect\app`:
+
+```powershell
+npm.cmd start -- --clear
+npx.cmd tsc --noEmit
+git status -sb
+```
+
+No pegar en el chat contraseñas, códigos SMS, tokens, claves privadas, service accounts ni el contenido del archivo `.env`. El usuario inicia sesión personalmente en Firebase/Google.
+
+## 8. Archivos de referencia
+
+- `docs/PLAN.md`: funcionalidades y estado del prototipo.
+- `docs/FIREBASE_SETUP.md`: Firebase, login, Storage, reglas y hosting de rutas compartidas.
+- `src/app/ruta.tsx`: flujo principal de rutas y entregas.
+- `src/app/direcciones.tsx`: credibilidad, aportes y comentarios.
+- `src/lib/parking-photo.ts`: decide si una dirección puede ofrecer un nuevo aporte desde el flujo de entrega. La captura y carga actual están en `src/app/direcciones.tsx`.
+- `src/components/app-tabs.tsx`: barra inferior.

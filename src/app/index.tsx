@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { DEFAULT_ROUTE_NAME, getLocalRouteDate, loadLocalRouteId, loadLocalRouteName, loadStops, saveLocalRouteName } from '@/lib/stops';
 import { auth, isFirebaseConfigured } from '@/lib/firebase';
 import { loadTodayRoute, updateTodayRouteName } from '@/lib/route-repository';
+import { ThemeLayer } from '@/components/theme-layer';
 
 const colors = {
   ink: '#20352B',
@@ -122,7 +123,7 @@ export default function HomeScreen() {
   });
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <ThemeLayer><SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <Image source={require('../../assets/images/icon.png')} style={styles.brandMark} contentFit="contain" accessibilityLabel="Logo de Connect" />
@@ -137,8 +138,25 @@ export default function HomeScreen() {
           </Link>
         </View>
 
-        <Text style={styles.greeting}>{routeStats.total === 0 ? 'Nuevo día, conductor' : 'Tu ruta de hoy'}</Text>
-        <Text style={styles.subtitle}>{routeStats.total === 0 ? 'Prepara tu jornada y organiza las entregas.' : 'Sigue el avance de tus entregas de hoy.'}</Text>
+        <Text style={styles.greeting}>{routeStats.total === 0 ? 'Tu jornada, bajo control' : 'Tu ruta de hoy'}</Text>
+        <Text style={styles.subtitle}>{routeStats.total === 0 ? 'Carga tus paradas, ordénalas y empieza a repartir.' : 'Sigue el avance de tus entregas y continúa con la próxima parada.'}</Text>
+
+        <View style={styles.workflow} accessibilityLabel="Pasos de la ruta: añadir paradas, optimizar y navegar">
+          <View style={styles.workflowStep}>
+            <View style={[styles.workflowNumber, routeStats.total > 0 && styles.workflowNumberActive]}><Text style={[styles.workflowNumberText, routeStats.total > 0 && styles.workflowNumberTextActive]}>1</Text></View>
+            <Text style={styles.workflowLabel}>Añade paradas</Text>
+          </View>
+          <View style={styles.workflowConnector} />
+          <View style={styles.workflowStep}>
+            <View style={[styles.workflowNumber, routeStats.total > 1 && styles.workflowNumberActive]}><Text style={[styles.workflowNumberText, routeStats.total > 1 && styles.workflowNumberTextActive]}>2</Text></View>
+            <Text style={styles.workflowLabel}>Optimiza</Text>
+          </View>
+          <View style={styles.workflowConnector} />
+          <View style={styles.workflowStep}>
+            <View style={[styles.workflowNumber, routeStats.delivered + routeStats.failed > 0 && styles.workflowNumberActive]}><Text style={[styles.workflowNumberText, routeStats.delivered + routeStats.failed > 0 && styles.workflowNumberTextActive]}>3</Text></View>
+            <Text style={styles.workflowLabel}>Reparte</Text>
+          </View>
+        </View>
 
         <View style={styles.routeCard}>
           <Text style={styles.cardEyebrow}>{routeStats.total === 0 ? 'NUEVA JORNADA' : 'RUTA DE HOY'}</Text>
@@ -169,37 +187,39 @@ export default function HomeScreen() {
           <Text style={styles.emptyText}>{routeStats.total === 0 ? 'Todavía no tienes paradas en la ruta de hoy.' : 'Resumen actualizado al volver de tu ruta.'}</Text>
           <Link href={'/ruta' as Href} asChild>
             <Pressable style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
-              <Text style={styles.primaryButtonText}>{routeStats.total === 0 ? '＋  Empezar nuevo día' : 'Ver ruta de hoy'}</Text>
+              <Text style={styles.primaryButtonText}>{routeStats.total === 0 ? '＋  Añadir paradas' : 'Abrir plan de ruta  ›'}</Text>
             </Pressable>
           </Link>
         </View>
 
-        <Text style={styles.sectionTitle}>Accesos rápidos</Text>
+        <Text style={styles.sectionTitle}>Tu operación</Text>
         <Link href={'/historial' as Href} asChild>
           <Pressable style={({ pressed }) => [styles.actionCard, pressed && styles.pressed]}>
             <View style={styles.actionIcon}><Text style={styles.actionIconText}>↻</Text></View>
             <View style={styles.actionCopy}>
-              <Text style={styles.actionTitle}>Ver todas mis rutas</Text>
-              <Text style={styles.actionDescription}>Consulta y renombra tus jornadas anteriores</Text>
+              <Text style={styles.actionTitle}>Historial de rutas</Text>
+              <Text style={styles.actionDescription}>Revisa el resultado de tus jornadas anteriores</Text>
             </View>
             <Text style={styles.chevron}>›</Text>
           </Pressable>
         </Link>
-        <View style={styles.actionCard}>
-          <View style={[styles.actionIcon, styles.communityIcon]}><Text style={styles.actionIconText}>✦</Text></View>
-          <View style={styles.actionCopy}>
-            <Text style={styles.actionTitle}>Datos de direcciones</Text>
-            <Text style={styles.actionDescription}>Consejos útiles de la comunidad</Text>
-          </View>
-          <Text style={styles.comingSoon}>PRONTO</Text>
-        </View>
+        <Link href={'/direcciones' as Href} asChild>
+          <Pressable style={({ pressed }) => [styles.actionCard, pressed && styles.pressed]}>
+            <View style={[styles.actionIcon, styles.communityIcon]}><Text style={styles.actionIconText}>✦</Text></View>
+            <View style={styles.actionCopy}>
+              <Text style={styles.actionTitle}>Datos de direcciones</Text>
+              <Text style={styles.actionDescription}>Consulta credibilidad y aporta fotos o comentarios</Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
+          </Pressable>
+        </Link>
 
         <View style={styles.tipCard}>
           <Text style={styles.tipLabel}>CONNECT</Text>
-          <Text style={styles.tipText}>Cada entrega cuenta. Organiza tu día a tu ritmo.</Text>
+          <Text style={styles.tipText}>Las fotos y los datos de direcciones son opcionales: siempre podrás marcar cada parada como entregada o fallida.</Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </SafeAreaView></ThemeLayer>
   );
 }
 
@@ -215,6 +235,14 @@ const styles = StyleSheet.create({
   avatarText: { color: colors.green, fontSize: 12, fontWeight: '700' },
   greeting: { color: colors.ink, fontSize: 27, fontWeight: '700', letterSpacing: -0.5 },
   subtitle: { color: colors.muted, fontSize: 14, lineHeight: 21, marginTop: 7, marginBottom: 22 },
+  workflow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, paddingHorizontal: 13, paddingVertical: 14, borderRadius: 17, backgroundColor: '#E7EDE3' },
+  workflowStep: { flex: 1, alignItems: 'center', gap: 6 },
+  workflowNumber: { width: 27, height: 27, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.white, borderWidth: 1, borderColor: '#D3DDD0' },
+  workflowNumberActive: { backgroundColor: colors.green, borderColor: colors.green },
+  workflowNumberText: { color: colors.muted, fontSize: 11, fontWeight: '700' },
+  workflowNumberTextActive: { color: colors.white },
+  workflowLabel: { color: colors.ink, fontSize: 9, fontWeight: '600', textAlign: 'center' },
+  workflowConnector: { width: 18, height: 1, marginBottom: 16, backgroundColor: '#B9CBB7' },
   routeCard: { backgroundColor: colors.white, borderRadius: 22, padding: 20, borderWidth: 1, borderColor: colors.line },
   cardEyebrow: { color: colors.green, fontSize: 10, fontWeight: '700', letterSpacing: 1.4 },
   routeDate: { color: colors.muted, fontSize: 12, textTransform: 'capitalize', marginTop: 6 },

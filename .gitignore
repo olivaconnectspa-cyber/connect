@@ -5,6 +5,8 @@ node_modules/
 .npm-cache/
 .firebase-cli-cache/
 .firebase-config/
+.firebase/
+public/r/firebase-config.js
 
 # Expo
 .expo/
@@ -46,3 +48,4 @@ example
 # generated native folders
 /ios
 /android
+/.expo-export-check

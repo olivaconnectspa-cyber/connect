@@ -1,12 +1,13 @@
 import { Link } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ThemeLayer } from '@/components/theme-layer';
 
 const colors = { ink: '#20352B', muted: '#718078', green: '#315E43', pale: '#F2F5EF', line: '#E5EAE3', white: '#FFFFFF', orange: '#94602B' };
 
 export default function PlansScreen() {
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <ThemeLayer><SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content}>
         <Link href="/cuenta" asChild><Pressable style={styles.backButton}><Text style={styles.backText}>‹  Cuenta</Text></Pressable></Link>
         <Text style={styles.eyebrow}>CONNECT PRO</Text>
@@ -31,7 +32,7 @@ export default function PlansScreen() {
         </View>
         <Text style={styles.disclaimer}>No se realizará ningún cobro desde esta pantalla.</Text>
       </ScrollView>
-    </SafeAreaView>
+    </SafeAreaView></ThemeLayer>
   );
 }
 

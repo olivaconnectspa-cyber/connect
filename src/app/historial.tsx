@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth, isFirebaseConfigured } from '@/lib/firebase';
 import { deleteRouteHistory, loadRouteHistory, updateRouteName, type TodayRoute } from '@/lib/route-repository';
 import { DEFAULT_ROUTE_NAME, deleteLocalRoute, loadLocalRouteHistory, saveLocalRouteName, type LocalRouteHistory } from '@/lib/stops';
+import { ThemeLayer } from '@/components/theme-layer';
 
 const colors = { ink: '#20352B', muted: '#718078', green: '#315E43', pale: '#F2F5EF', line: '#E5EAE3', white: '#FFFFFF' };
 type HistoryEntry = { id: string; date: string; name: string; total: number; delivered: number; failed: number; pending: number; durationMs: number | null };
@@ -133,7 +134,7 @@ export default function HistoryScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <ThemeLayer><SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content}>
         <Link href="/ruta" asChild><Pressable style={styles.backButton}><Text style={styles.backText}>‹  Volver a la ruta</Text></Pressable></Link>
         <Text style={styles.eyebrow}>TUS JORNADAS</Text>
@@ -168,7 +169,7 @@ export default function HistoryScreen() {
         ))}
         {!isFirebaseConfigured && <Text style={styles.helper}>Este historial se guarda en este teléfono. Al iniciar sesión con Firebase, las nuevas rutas quedarán asociadas a tu cuenta.</Text>}
       </ScrollView>
-    </SafeAreaView>
+    </SafeAreaView></ThemeLayer>
   );
 }
 

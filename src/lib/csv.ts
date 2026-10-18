@@ -46,7 +46,7 @@ function parseRows(content: string, delimiter: string): string[][] {
   return rows;
 }
 
-export type ImportedAddress = { address: string; customerCount: number; recordCount: number };
+export type ImportedAddress = { address: string; customerCount: number; recordCount: number; customerPhone?: string; customerName?: string };
 
 export function normalizeDeliveryAddress(value: string) {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -61,9 +61,10 @@ export function parseAddressRows(rows: string[][]): ImportedAddress[] {
 
   const addressColumn = rows[0].findIndex((cell) => /direccion|domicilio|address|calle/.test(normalizeHeader(cell)));
   const customerColumn = rows[0].findIndex((cell) => /cliente|nombre|customer|recipient|consignee|destinatario/.test(normalizeHeader(cell)));
+  const phoneColumn = rows[0].findIndex((cell) => /telefono|celular|movil|phone|mobile/.test(normalizeHeader(cell)));
   const columnIndex = addressColumn >= 0 ? addressColumn : 0;
   const firstDataRow = addressColumn >= 0 ? 1 : 0;
-  const uniqueAddresses = new Map<string, { address: string; recordCount: number; customers: Set<string> }>();
+  const uniqueAddresses = new Map<string, { address: string; recordCount: number; customers: Map<string, string>; customerPhone: string }>();
 
   for (const row of rows.slice(firstDataRow)) {
     const address = row[columnIndex]?.trim();
@@ -71,21 +72,26 @@ export function parseAddressRows(rows: string[][]): ImportedAddress[] {
     const normalized = normalizeDeliveryAddress(address);
     const existing = uniqueAddresses.get(normalized);
     const customer = customerColumn >= 0 ? row[customerColumn]?.trim() : '';
+    const phone = phoneColumn >= 0 ? row[phoneColumn]?.trim() : '';
     if (existing) {
       existing.recordCount += 1;
-      if (customer) existing.customers.add(normalizeHeader(customer));
+      if (customer) existing.customers.set(normalizeHeader(customer), customer);
+      if (!existing.customerPhone && phone) existing.customerPhone = phone;
     } else {
       uniqueAddresses.set(normalized, {
         address,
         recordCount: 1,
-        customers: new Set(customer ? [normalizeHeader(customer)] : []),
+        customers: new Map(customer ? [[normalizeHeader(customer), customer]] : []),
+        customerPhone: phone,
       });
     }
   }
-  return [...uniqueAddresses.values()].map(({ address, recordCount, customers }) => ({
+  return [...uniqueAddresses.values()].map(({ address, recordCount, customers, customerPhone }) => ({
     address,
     recordCount,
     customerCount: customerColumn >= 0 ? customers.size : 0,
+    customerPhone,
+    customerName: [...customers.values()].slice(0, 8).join(', ').slice(0, 200),
   }));
 }
 

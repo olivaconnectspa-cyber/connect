@@ -3,21 +3,44 @@ import MapView, { Marker, Polyline, type Region } from 'react-native-maps';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { Delivery } from '@/lib/route-repository';
+import { ThemeLayer } from '@/components/theme-layer';
 
 type Coordinate = { latitude: number; longitude: number };
-type Props = { stops: Delivery[]; activeStopId?: string | null; routeStarted?: boolean; expanded?: boolean; onSelectStop: (id: string) => void };
+type Props = { stops: Delivery[]; activeStopId?: string | null; selectedStopId?: string | null; routeStarted?: boolean; expanded?: boolean; onSelectStop: (id: string) => void; endAddress?: string; gpsOrigin?: Coordinate | null; placementPreviewAddress?: string };
 const colors = { ink: '#20352B', muted: '#718078', green: '#315E43', pale: '#F2F5EF', line: '#E5EAE3', white: '#FFFFFF', red: '#A14337' };
 const SANTIAGO_REGION: Region = { latitude: -33.4489, longitude: -70.6693, latitudeDelta: 0.18, longitudeDelta: 0.18 };
 
-export default function RouteMap({ stops, activeStopId, routeStarted = false, expanded = false, onSelectStop }: Props) {
+export default function RouteMap({ stops, activeStopId, selectedStopId, routeStarted = false, expanded = false, onSelectStop, endAddress = '', gpsOrigin = null, placementPreviewAddress = '' }: Props) {
   const mapRef = useRef<MapView>(null);
   const [coordinates, setCoordinates] = useState<Record<string, Coordinate>>({});
+  const [endCoordinate, setEndCoordinate] = useState<Coordinate | null>(null);
+  const [placementPreviewCoordinate, setPlacementPreviewCoordinate] = useState<Coordinate | null>(null);
   const [search, setSearch] = useState('');
   const [searchPin, setSearchPin] = useState<Coordinate | null>(null);
   const [loading, setLoading] = useState(false);
   const [hasLocationPermission, setHasLocationPermission] = useState(Platform.OS !== 'android');
   const [message, setMessage] = useState('');
-  const autoLocated = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    const geocode = async (value: string) => {
+      if (!value.trim()) return null;
+      try {
+        const result = (await Location.geocodeAsync(`${value.trim()}, Chile`))[0];
+        return result ? { latitude: result.latitude, longitude: result.longitude } : null;
+      } catch { return null; }
+    };
+    void geocode(endAddress).then((end) => { if (!cancelled) setEndCoordinate(end); });
+    return () => { cancelled = true; };
+  }, [endAddress]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!placementPreviewAddress.trim()) { setPlacementPreviewCoordinate(null); return; }
+    void Location.geocodeAsync(`${placementPreviewAddress.trim()}, Chile`).then((results) => {
+      const result = results[0];
+      if (!cancelled && result) setPlacementPreviewCoordinate({ latitude: result.latitude, longitude: result.longitude });
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [placementPreviewAddress]);
   async function geocodeStops(): Promise<Record<string, Coordinate> | null> {
     if (loading) return null;
     setLoading(true);
@@ -56,10 +79,9 @@ export default function RouteMap({ stops, activeStopId, routeStarted = false, ex
   }
 
   useEffect(() => {
-    if (!routeStarted || autoLocated.current) return;
-    autoLocated.current = true;
+    if (!routeStarted) return;
     void geocodeStops();
-  }, [routeStarted]);
+  }, [routeStarted, stops.map((stop) => stop.id).join('|')]);
 
   async function searchAddress() {
     if (!search.trim()) return;
@@ -87,10 +109,10 @@ export default function RouteMap({ stops, activeStopId, routeStarted = false, ex
     }
   }
 
-  const orderedCoordinates = useMemo(() => stops.flatMap((stop) => {
+  const orderedCoordinates = useMemo(() => [...(gpsOrigin ? [gpsOrigin] : []), ...stops.flatMap((stop) => {
     const coordinate = coordinates[stop.id];
     return coordinate ? [coordinate] : [];
-  }), [coordinates, stops]);
+  }), ...(endCoordinate ? [endCoordinate] : []), ...(placementPreviewCoordinate ? [placementPreviewCoordinate] : [])], [coordinates, endCoordinate, gpsOrigin, placementPreviewCoordinate, stops]);
 
   useEffect(() => {
     if (orderedCoordinates.length > 1) {
@@ -104,22 +126,24 @@ export default function RouteMap({ stops, activeStopId, routeStarted = false, ex
   }, [orderedCoordinates]);
 
   useEffect(() => {
-    const coordinate = activeStopId ? coordinates[activeStopId] : undefined;
+    const targetId = selectedStopId ?? activeStopId;
+    const coordinate = targetId ? coordinates[targetId] : undefined;
     if (coordinate) mapRef.current?.animateToRegion({ ...coordinate, latitudeDelta: 0.015, longitudeDelta: 0.015 }, 350);
-  }, [activeStopId, coordinates]);
+  }, [activeStopId, selectedStopId, coordinates]);
 
   useEffect(() => {
-    if (!activeStopId || coordinates[activeStopId]) return;
-    const stop = stops.find((item) => item.id === activeStopId);
+    const targetId = selectedStopId ?? activeStopId;
+    if (!targetId || coordinates[targetId]) return;
+    const stop = stops.find((item) => item.id === targetId);
     if (!stop) return;
     void Location.geocodeAsync(`${stop.address}, Santiago, Chile`).then((results) => {
       const result = results[0];
       if (result) setCoordinates((current) => ({ ...current, [stop.id]: { latitude: result.latitude, longitude: result.longitude } }));
     }).catch(() => undefined);
-  }, [activeStopId, coordinates, stops]);
+  }, [activeStopId, selectedStopId, coordinates, stops]);
 
   return (
-    <View style={[styles.card, expanded && styles.expandedCard]}>
+    <ThemeLayer><View style={[styles.card, expanded && styles.expandedCard]}>
       {!expanded && <View style={styles.headingRow}>
         <View><Text style={styles.title}>Mapa de la ruta</Text><Text style={styles.caption}>Las ubicaciones pueden ser aproximadas; confirma el domicilio.</Text></View>
         <Pressable onPress={() => void geocodeStops()} disabled={loading} style={styles.locateButton}><Text style={styles.locateText}>{loading ? 'Ubicando…' : 'Ubicar'}</Text></Pressable>
@@ -131,12 +155,15 @@ export default function RouteMap({ stops, activeStopId, routeStarted = false, ex
       <View style={[styles.mapFrame, expanded && styles.expandedMapFrame]}>
         <MapView ref={mapRef} style={StyleSheet.absoluteFill} initialRegion={SANTIAGO_REGION}>
           {orderedCoordinates.length > 1 && <Polyline coordinates={orderedCoordinates} strokeColor={colors.green} strokeWidth={3} />}
+          {gpsOrigin && <Marker coordinate={gpsOrigin} title="Inicio: ubicación GPS actual" pinColor="#2878D0" />}
+          {endCoordinate && <Marker coordinate={endCoordinate} title="Punto final" pinColor="#D88C44" />}
+          {placementPreviewCoordinate && <Marker coordinate={placementPreviewCoordinate} title="Nueva parada por confirmar" pinColor="#7B4BC4" />}
           {stops.map((stop, index) => {
             const coordinate = coordinates[stop.id];
             if (!coordinate) return null;
             const number = stop.displayNumber ?? String(stop.sequence || index + 1);
-            return <Marker key={stop.id} coordinate={coordinate} title={`${number} · ${stop.address}`} description={stop.status === 'delivered' ? 'Entregada' : stop.status === 'failed' ? 'Fallida' : 'Pendiente'} onPress={() => { if (stop.status === 'pending') onSelectStop(stop.id); }}>
-              <View style={[styles.numberMarker, stop.status === 'delivered' && styles.doneMarker, stop.status === 'failed' && styles.failedMarker]}><Text style={styles.numberMarkerText}>{number}</Text></View>
+            return <Marker key={stop.id} coordinate={coordinate} title={`${number} · ${stop.address}`} description={stop.status === 'delivered' ? 'Entregada' : stop.status === 'failed' ? 'Fallida' : 'Pendiente'} onPress={() => onSelectStop(stop.id)}>
+              <View style={[styles.numberMarker, stop.status === 'delivered' && styles.doneMarker, stop.status === 'failed' && styles.failedMarker, selectedStopId === stop.id && styles.selectedMarker]}><Text style={styles.numberMarkerText}>{number}</Text></View>
             </Marker>;
           })}
           {searchPin && <Marker coordinate={searchPin} title={search.trim()} pinColor="#D88C44" />}
@@ -144,7 +171,7 @@ export default function RouteMap({ stops, activeStopId, routeStarted = false, ex
       </View>
       {!expanded && !!message && <Text style={styles.message}>{message}</Text>}
       {!expanded && <Text style={styles.privacyText}>El mapa usa el geocodificador del teléfono para ubicar las direcciones; el permiso se solicita al tocar «Ubicar».</Text>}
-    </View>
+    </View></ThemeLayer>
   );
 }
 
@@ -165,6 +192,7 @@ const styles = StyleSheet.create({
   numberMarker: { minWidth: 29, height: 29, paddingHorizontal: 5, borderRadius: 15, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: colors.white },
   doneMarker: { backgroundColor: '#5B8F67' },
   failedMarker: { backgroundColor: colors.red },
+  selectedMarker: { backgroundColor: '#2878D0', borderColor: '#FFFFFF', borderWidth: 3, transform: [{ scale: 1.16 }] },
   numberMarkerText: { color: colors.white, fontSize: 9, fontWeight: '700' },
   disabledButton: { opacity: 0.45 },
   message: { color: colors.green, fontSize: 10, lineHeight: 15, marginTop: 8 },

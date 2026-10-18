@@ -30,6 +30,8 @@ export type Delivery = {
   status: DeliveryStatus;
   failureReason: string | null;
   proofPhotoUrl: string | null;
+  customerPhone?: string;
+  customerName?: string;
 };
 
 export type TodayRoute = {
@@ -40,6 +42,21 @@ export type TodayRoute = {
   deliveries: Delivery[];
   startedAt: number | null;
   completedAt: number | null;
+  isOptimized: boolean;
+  startAddress: string;
+  endAddress: string;
+  endAtLastStop: boolean;
+};
+
+export type SharedRouteSnapshot = {
+  name: string;
+  stops: Array<{
+    address: string;
+    packageNumber: string;
+    customerName: string;
+    customerPhone: string;
+    status: DeliveryStatus;
+  }>;
 };
 
 function timestampToMillis(value: unknown): number | null {
@@ -78,6 +95,8 @@ export async function loadRouteHistory(userId: string): Promise<TodayRoute[]> {
         status: status === 'delivered' || status === 'failed' ? status : 'pending',
         failureReason: typeof data.failureReason === 'string' ? data.failureReason : null,
         proofPhotoUrl: typeof data.proofPhotoUrl === 'string' ? data.proofPhotoUrl : null,
+        customerPhone: typeof data.customerPhone === 'string' ? data.customerPhone : '',
+        customerName: typeof data.customerName === 'string' ? data.customerName : '',
       };
     });
     return {
@@ -88,6 +107,10 @@ export async function loadRouteHistory(userId: string): Promise<TodayRoute[]> {
       deliveries,
       startedAt: timestampToMillis(routeData.startedAt),
       completedAt: timestampToMillis(routeData.completedAt),
+      isOptimized: routeData.isOptimized === true,
+      startAddress: typeof routeData.startAddress === 'string' ? routeData.startAddress : '',
+      endAddress: typeof routeData.endAddress === 'string' ? routeData.endAddress : '',
+      endAtLastStop: typeof routeData.endAddress !== 'string' || routeData.endAddress.trim() === '',
     };
   }));
 }
@@ -95,6 +118,51 @@ export async function loadRouteHistory(userId: string): Promise<TodayRoute[]> {
 function requireDb() {
   if (!db) throw new Error('firebase-not-configured');
   return db;
+}
+
+export async function createSharedRouteLink(userId: string, route: SharedRouteSnapshot): Promise<string> {
+  const routeRef = doc(collection(requireDb(), 'sharedRoutes'));
+  const createdAt = new Date();
+  const expiresAt = new Date(createdAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+  await setDoc(routeRef, {
+    ownerId: userId,
+    name: route.name.slice(0, 60),
+    stops: route.stops.slice(0, 100).map((stop) => ({
+      address: stop.address.slice(0, 500),
+      packageNumber: stop.packageNumber.slice(0, 12),
+      customerName: stop.customerName.slice(0, 200),
+      customerPhone: stop.customerPhone.slice(0, 30),
+      status: stop.status,
+    })),
+    isOptimized: true,
+    createdAt: serverTimestamp(),
+    expiresAt,
+  });
+  return routeRef.id;
+}
+
+export async function loadSharedRouteLink(shareId: string): Promise<SharedRouteSnapshot | null> {
+  if (!/^[A-Za-z0-9_-]{10,40}$/.test(shareId)) return null;
+  const snapshot = await getDoc(doc(requireDb(), 'sharedRoutes', shareId));
+  if (!snapshot.exists()) return null;
+  const data = snapshot.data();
+  if (!(data.expiresAt instanceof Date) && !(data.expiresAt && typeof data.expiresAt === 'object' && 'toMillis' in data.expiresAt && typeof data.expiresAt.toMillis === 'function')) return null;
+  if (timestampToMillis(data.expiresAt) === null || timestampToMillis(data.expiresAt)! <= Date.now()) return null;
+  if (typeof data.name !== 'string' || !Array.isArray(data.stops) || data.stops.length < 1 || data.stops.length > 100) return null;
+  const stops = data.stops.flatMap((item: unknown): SharedRouteSnapshot['stops'] => {
+    if (!item || typeof item !== 'object') return [];
+    const stop = item as Record<string, unknown>;
+    if (typeof stop.address !== 'string' || !stop.address.trim() || stop.address.length > 500) return [];
+    const packageNumber = typeof stop.packageNumber === 'string' && /^\d+(?:\.\d+)?$/.test(stop.packageNumber)
+      ? stop.packageNumber.slice(0, 12)
+      : '';
+    const status = stop.status === 'delivered' || stop.status === 'failed' ? stop.status : stop.status === 'pending' ? 'pending' : null;
+    const customerName = typeof stop.customerName === 'string' ? stop.customerName.slice(0, 200) : '';
+    const customerPhone = typeof stop.customerPhone === 'string' ? stop.customerPhone.slice(0, 30) : '';
+    return packageNumber && status ? [{ address: stop.address, packageNumber, customerName, customerPhone, status }] : [];
+  });
+  if (stops.length !== data.stops.length) return null;
+  return { name: data.name.slice(0, 60), stops };
 }
 
 function getLocalDateKey() {
@@ -140,6 +208,10 @@ export async function loadTodayRoute(userId: string): Promise<TodayRoute | null>
     status: routeData.status === 'completed' ? 'completed' : 'active',
     startedAt: timestampToMillis(routeData.startedAt),
     completedAt: timestampToMillis(routeData.completedAt),
+    isOptimized: routeData.isOptimized === true,
+    startAddress: typeof routeData.startAddress === 'string' ? routeData.startAddress : '',
+    endAddress: typeof routeData.endAddress === 'string' ? routeData.endAddress : '',
+    endAtLastStop: typeof routeData.endAddress !== 'string' || routeData.endAddress.trim() === '',
     deliveries: deliveriesSnapshot.docs.map((deliverySnapshot) => {
       const deliveryData = deliverySnapshot.data();
       const status = deliveryData.status;
@@ -154,6 +226,8 @@ export async function loadTodayRoute(userId: string): Promise<TodayRoute | null>
         status: status === 'delivered' || status === 'failed' ? status : 'pending',
         failureReason: typeof deliveryData.failureReason === 'string' ? deliveryData.failureReason : null,
         proofPhotoUrl: typeof deliveryData.proofPhotoUrl === 'string' ? deliveryData.proofPhotoUrl : null,
+        customerPhone: typeof deliveryData.customerPhone === 'string' ? deliveryData.customerPhone : '',
+        customerName: typeof deliveryData.customerName === 'string' ? deliveryData.customerName : '',
       };
     }),
   };
@@ -172,6 +246,7 @@ export async function createTodayRoute(userId: string): Promise<string> {
     nextSequence: 1,
     startAddress: '',
     endAddress: '',
+    isOptimized: false,
     createdAt: now,
     updatedAt: now,
   });
@@ -192,6 +267,14 @@ export async function markTodayRouteStarted(userId: string, routeId?: string): P
       updatedAt: serverTimestamp(),
     });
     return startedAt;
+  });
+}
+
+export async function updateRouteEndpoints(userId: string, startAddress: string, endAddress: string, endAtLastStop: boolean, routeId?: string): Promise<void> {
+  await updateDoc(getRouteRef(userId, routeId), {
+    startAddress: startAddress.trim().slice(0, 500),
+    endAddress: endAtLastStop ? '' : endAddress.trim().slice(0, 500),
+    updatedAt: serverTimestamp(),
   });
 }
 
@@ -225,7 +308,7 @@ export async function deleteRouteHistory(userId: string, routeId: string): Promi
 export async function addDeliveryToTodayRoute(
   userId: string,
   address: string,
-  details: { customerCount?: number; recordCount?: number; displayNumber?: string } = {},
+  details: { customerCount?: number; recordCount?: number; displayNumber?: string; customerPhone?: string; customerName?: string } = {},
   routeId?: string,
 ): Promise<Delivery> {
   const firestore = requireDb();
@@ -264,12 +347,15 @@ export async function addDeliveryToTodayRoute(
       nextSequence: nextSequence + 1,
       startAddress: typeof routeData?.startAddress === 'string' ? routeData.startAddress : '',
       endAddress: typeof routeData?.endAddress === 'string' ? routeData.endAddress : '',
+      isOptimized: displayNumber ? routeData?.isOptimized === true : false,
       createdAt: routeData?.createdAt ?? timestamp,
       updatedAt: timestamp,
     });
     transaction.set(deliveryRef, {
       ownerId: userId,
       address: cleanAddress,
+      customerPhone: (details.customerPhone ?? '').trim().slice(0, 30),
+      customerName: (details.customerName ?? '').trim().slice(0, 200),
       customerCount: Math.max(0, Math.floor(details.customerCount ?? 0)),
       recordCount: Math.max(0, Math.floor(details.recordCount ?? 0)),
       note: '',
@@ -297,6 +383,8 @@ export async function addDeliveryToTodayRoute(
     status: 'pending',
     failureReason: null,
     proofPhotoUrl: null,
+    customerPhone: (details.customerPhone ?? '').trim().slice(0, 30),
+    customerName: (details.customerName ?? '').trim().slice(0, 200),
   };
 }
 
@@ -321,6 +409,13 @@ export async function updateDeliveryNote(userId: string, deliveryId: string, not
   });
 }
 
+export async function updateDeliveryPhone(userId: string, deliveryId: string, customerPhone: string, routeId?: string): Promise<void> {
+  await updateDoc(doc(collection(getRouteRef(userId, routeId), 'deliveries'), deliveryId), {
+    customerPhone: customerPhone.trim().slice(0, 30),
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function updateDeliveryOrder(
   userId: string,
   orderedStops: Array<{ id: string; sequence: number; displayNumber: string }>,
@@ -338,6 +433,7 @@ export async function updateDeliveryOrder(
     }
     await batch.commit();
   }
+  await updateDoc(getRouteRef(userId, routeId), { isOptimized: true, updatedAt: serverTimestamp() });
 }
 
 export async function updateTodayRouteName(userId: string, name: string, routeId?: string): Promise<string> {
@@ -358,6 +454,7 @@ export async function updateTodayRouteName(userId: string, name: string, routeId
       nextSequence: typeof routeData?.nextSequence === 'number' ? routeData.nextSequence : 1,
       startAddress: typeof routeData?.startAddress === 'string' ? routeData.startAddress : '',
       endAddress: typeof routeData?.endAddress === 'string' ? routeData.endAddress : '',
+      isOptimized: routeData?.isOptimized === true,
       createdAt: routeData?.createdAt ?? timestamp,
       updatedAt: timestamp,
     });
@@ -374,7 +471,7 @@ export async function updateRouteName(userId: string, routeId: string, name: str
   return cleanName;
 }
 
-export async function removeDeliveryFromTodayRoute(userId: string, deliveryId: string, routeId?: string): Promise<void> {
+export async function removeDeliveryFromTodayRoute(userId: string, deliveryId: string, routeId?: string, preserveOptimization = false): Promise<void> {
   const firestore = requireDb();
   const routeRef = getRouteRef(userId, routeId);
   const deliveryRef = doc(collection(routeRef, 'deliveries'), deliveryId);
@@ -389,6 +486,7 @@ export async function removeDeliveryFromTodayRoute(userId: string, deliveryId: s
     transaction.delete(deliveryRef);
     transaction.update(routeRef, {
       stopCount: Math.max(0, currentCount - 1),
+      isOptimized: preserveOptimization && currentCount > 1,
       updatedAt: serverTimestamp(),
     });
   });
@@ -401,17 +499,13 @@ export async function updateDeliveryStatus(
   failureReason: string | null = null,
   routeId?: string,
 ): Promise<void> {
-  if (status === 'failed' && !failureReason?.trim()) {
-    throw new Error('failure-reason-required');
-  }
-
   const deliveryRef = doc(
     collection(getRouteRef(userId, routeId), 'deliveries'),
     deliveryId,
   );
   await updateDoc(deliveryRef, {
     status,
-    failureReason: status === 'failed' ? failureReason?.trim() : null,
+    failureReason: status === 'failed' ? failureReason?.trim() || null : null,
     deliveredAt: status === 'delivered' ? serverTimestamp() : null,
     updatedAt: serverTimestamp(),
   });
