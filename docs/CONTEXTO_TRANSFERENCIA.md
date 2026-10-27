@@ -1,6 +1,6 @@
 # Connect — resumen de traspaso del proyecto
 
-Actualizado: 17 de octubre de 2026
+Actualizado: 27 de octubre de 2026
 
 Este documento reúne el objetivo, las decisiones de producto, el estado técnico y el siguiente trabajo acordado en la conversación. Es un resumen para retomar el proyecto; no reproduce literalmente cada mensaje.
 
@@ -75,9 +75,17 @@ La experiencia se inspira en el flujo sencillo de Circuit —añadir, optimizar 
 - Se reservó espacio al pie de la pantalla de navegación para que la barra flotante no tape los botones Entregada/Fallida.
 - Verificación de este estado: `npx.cmd tsc --noEmit` y `git diff --check` pasaron. Todavía no se verificó la interacción visual en el dispositivo del usuario.
 
+## 5.1 Importación de PDF (27 de octubre de 2026)
+
+- Se añadió soporte para importar PDF con texto seleccionable, además de Excel y CSV. Los archivos del selector se copian primero al caché privado de la app para evitar los errores de permiso `READ` que devolvía Expo Go.
+- PDF.js usa un worker empaquetado y registrado para el entorno React Native/Hermes; esto evita que la ruta de worker intente resolverse mediante una importación dinámica de Metro.
+- El parser contempla la hoja de viaje de Paris con sus columnas de secuencia, cliente, dirección y comuna. La importación presenta vista previa antes de añadir las paradas.
+- Los mensajes ahora distinguen un PDF sin texto seleccionable de un fallo de procesamiento y ya no muestran el aviso de OCR para cualquier error PDF.
+- `npx.cmd tsc --noEmit` pasó después de estos cambios. **La prueba en Expo Go/Android sigue pendiente**, por lo que todavía no se debe considerar confirmado el funcionamiento hasta importar el PDF en el teléfono y revisar que el total y las direcciones de la vista previa coincidan con la hoja.
+
 ## 6. Próximo paso al retomar
 
-1. Iniciar Expo y recargar la app en el teléfono.
+1. Iniciar Expo y recargar la app en el teléfono. Importar `Hoja de Viaje.pdf` y confirmar que el worker de PDF.js puede procesarlo en Hermes; verificar cantidad de paradas y contenido de la vista previa antes de aceptar.
 2. Optimizar una ruta de prueba. Confirmar que antes de optimizar no se habiliten Entregada/Fallida y después sí.
 3. Iniciar con mapa integrado; comprobar que Entregada/Fallida queden visibles por encima de la barra inferior.
 4. Abrir **Paradas**, probar las tres pestañas, seleccionar varias paradas incluidas visitadas, comprobar el borde azul y cerrar solo con **X**. Verificar que una pendiente seleccionada se muestre como parada activa.

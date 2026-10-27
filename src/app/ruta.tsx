@@ -1,5 +1,6 @@
 import { Link, router, useFocusEffect } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as XLSX from 'xlsx';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -11,6 +12,7 @@ import { addDeliveryToTodayRoute, completeTodayRoute, createSharedRouteLink, cre
 import { auth, isFirebaseConfigured } from '@/lib/firebase';
 import { createLocalTodayRoute, deleteRouteFavorite, finishLocalRoute, loadLocalRouteEndpoints, loadLocalRouteId, loadLocalRouteName, loadLocalRouteOptimized, loadLocalRouteTiming, loadRouteFavorites, loadStops, saveLocalRouteEndpoints, saveLocalRouteOptimized, saveLocalRouteStartedAt, saveRouteFavorite, saveStops, type RouteFavorite, type Stop } from '@/lib/stops';
 import { normalizeDeliveryAddress, parseAddressRows, parseCsvAddresses, type ImportedAddress } from '@/lib/csv';
+import { extractPdfAddressRows } from '@/lib/pdf-addresses';
 import RouteMap from '@/components/route-map';
 import { clearNextStopNotification, prepareRouteNotifications, ROUTE_NOTIFICATION_ACTIONS, showNextStopNotification } from '@/lib/route-notifications';
 import { addNotificationResponseReceivedListener } from 'expo-notifications/build/NotificationsEmitter';
@@ -20,6 +22,28 @@ import { ThemeLayer } from '@/components/theme-layer';
 const colors = { ink: '#20352B', muted: '#718078', green: '#315E43', pale: '#F2F5EF', line: '#E5EAE3', white: '#FFFFFF', red: '#A14337' };
 type NavigationProvider = 'google' | 'waze' | 'inside';
 type RouteSummary = { elapsedMs: number; delivered: number; failed: number; pending: number };
+
+async function readPickedFileBytes(uri: string) {
+  const encodedFile = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+  const base64 = encodedFile.replace(/^data:[^,]*;base64,/i, '').replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64) || base64.length % 4 === 1) {
+    throw new Error('Android devolvió el archivo con una codificación incompleta.');
+  }
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const bytes = new Uint8Array(Math.floor((base64.length * 3) / 4) - (base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0));
+  let outputIndex = 0;
+  for (let index = 0; index < base64.length; index += 4) {
+    const a = alphabet.indexOf(base64[index]);
+    const b = alphabet.indexOf(base64[index + 1]);
+    const c = base64[index + 2] === '=' ? 0 : alphabet.indexOf(base64[index + 2]);
+    const d = base64[index + 3] === '=' ? 0 : alphabet.indexOf(base64[index + 3]);
+    const chunk = (a << 18) | (b << 12) | (c << 6) | d;
+    if (outputIndex < bytes.length) bytes[outputIndex++] = (chunk >> 16) & 0xff;
+    if (outputIndex < bytes.length) bytes[outputIndex++] = (chunk >> 8) & 0xff;
+    if (outputIndex < bytes.length) bytes[outputIndex++] = chunk & 0xff;
+  }
+  return bytes;
+}
 
 function describeOperationError(error: unknown) {
   if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
@@ -452,29 +476,48 @@ export default function RouteScreen() {
     setStorageError('');
     setImportPreview(null);
     setIsReadingFile(true);
+    let copiedFileUri: string | null = null;
+    let selectedExtension: string | undefined;
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: [
+          'application/pdf',
           'text/csv',
           'text/comma-separated-values',
           'application/vnd.ms-excel',
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ],
-        copyToCacheDirectory: true,
+        copyToCacheDirectory: false,
       });
       if (result.canceled) return;
       const file = result.assets[0];
       const extension = file.name.toLowerCase().split('.').pop();
-      if (!['csv', 'xlsx', 'xls'].includes(extension ?? '')) {
-        setStorageError('Elige un archivo Excel (.xlsx o .xls) o CSV.');
+      selectedExtension = extension;
+      if (!['pdf', 'csv', 'xlsx', 'xls'].includes(extension ?? '')) {
+        setStorageError('Elige un PDF, un archivo Excel (.xlsx o .xls) o CSV.');
         return;
       }
-      const fileResponse = await fetch(file.uri);
+      if ((file.size ?? 0) > 25 * 1024 * 1024) {
+        setStorageError('El archivo supera el límite de 25 MB.');
+        return;
+      }
+      if (!FileSystem.cacheDirectory) throw new Error('No está disponible el caché local de la aplicación.');
+      copiedFileUri = `${FileSystem.cacheDirectory}connect-import-${Date.now()}.${extension}`;
+      await FileSystem.copyAsync({ from: file.uri, to: copiedFileUri });
       let addresses: ImportedAddress[];
       if (extension === 'csv') {
-        addresses = parseCsvAddresses(await fileResponse.text());
+        addresses = parseCsvAddresses(await FileSystem.readAsStringAsync(copiedFileUri));
+      } else if (extension === 'pdf') {
+        const pdfBytes = await readPickedFileBytes(copiedFileUri);
+        if (file.size && pdfBytes.byteLength !== file.size) {
+          throw new Error(`El PDF quedó incompleto al copiarlo (${pdfBytes.byteLength} de ${file.size} bytes).`);
+        }
+        if (String.fromCharCode(...pdfBytes.subarray(0, 5)) !== '%PDF-') {
+          throw new Error('El archivo seleccionado no conserva la firma PDF después de copiarlo.');
+        }
+        addresses = parseAddressRows(await extractPdfAddressRows(pdfBytes));
       } else {
-        const workbookBytes = new Uint8Array(await fileResponse.arrayBuffer());
+        const workbookBytes = await readPickedFileBytes(copiedFileUri);
         const workbook = XLSX.read(workbookBytes, { type: 'array' });
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = firstSheetName ? workbook.Sheets[firstSheetName] : undefined;
@@ -484,7 +527,7 @@ export default function RouteScreen() {
         addresses = parseAddressRows(rows.map((row) => row.map((cell) => String(cell ?? ''))));
       }
       if (addresses.length === 0) {
-        setStorageError('No encontramos direcciones. Usa una columna llamada Dirección o deja las direcciones en la primera columna de la primera hoja.');
+        setStorageError('No encontramos direcciones. En PDF, usa un documento con texto seleccionable y filas de direcciones; en Excel o CSV, usa una columna llamada Dirección o la primera columna.');
         return;
       }
       const existing = new Set((routeFinished ? [] : stops).map((stop) => normalizeDeliveryAddress(stop.address)));
@@ -495,10 +538,22 @@ export default function RouteScreen() {
       }
       setImportPreview(newAddresses);
     } catch (error) {
-      console.warn('No se pudo importar el archivo seleccionado:', error);
       const detail = error instanceof Error ? error.message : 'Error de lectura';
-      setStorageError(`No se pudo abrir el archivo. ${detail}. Revisa que sea un Excel o CSV válido.`);
+      if (selectedExtension === 'pdf' && /texto seleccionable|escanead[oa]/i.test(detail)) {
+        setStorageError('Este PDF parece ser un escaneo sin texto seleccionable. Necesita OCR; prueba exportar la hoja a Excel/CSV o usar un PDF con texto.');
+      } else if (selectedExtension === 'pdf') {
+        setStorageError(`No se pudo procesar este PDF en el teléfono. Exporta la hoja de viaje como Excel o CSV e impórtala. Detalle: ${detail}`);
+      } else {
+        setStorageError(`No se pudo abrir el archivo. ${detail}`);
+      }
     } finally {
+      if (copiedFileUri) {
+        try {
+          await FileSystem.deleteAsync(copiedFileUri, { idempotent: true });
+        } catch {
+          // The temporary file is in the app cache; cleanup failure must not hide import results.
+        }
+      }
       setIsReadingFile(false);
     }
   }
@@ -964,39 +1019,12 @@ export default function RouteScreen() {
       setRouteFinished(false);
       setImportPreview(null);
       setRouteSummary(null);
-      setSummaryVisible(false);
-      setVisitedStopsExpanded(false);
-      setStopListExpanded(false);
-      setAddress('');
-    } catch (error) {
-      console.error('No se pudo crear otra ruta hoy:', error);
-      const code = describeOperationError(error);
-      setStorageError(code === 'login-required'
-        ? 'Inicia sesión para crear otra ruta y guardarla en tu cuenta.'
-        : code === 'permission-denied'
+      setcode === 'permission-denied'
           ? 'Firebase rechazó crear la ruta (permission-denied). Hay que publicar las reglas de Firestore actualizadas en Firebase Console.'
-          : `No se pudo crear otra ruta. Código: ${code}.`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function confirmFinishRoute() {
-    if (!routeStarted || routeFinished) return;
-    const pending = stops.filter((stop) => stop.status === 'pending').length;
+          : `No se pustops.filter((stop) => stop.status === 'pending').length;
     Alert.alert(
       'Terminar ruta',
-      pending > 0 ? `Quedan ${pending} paradas pendientes. ¿Quieres terminar la ruta y guardarlas como pendientes?` : '¿Quieres terminar y guardar el resumen de esta ruta?',
-      [
-        { text: 'Seguir en ruta', style: 'cancel' },
-        { text: 'Terminar ruta', style: 'destructive', onPress: () => void finishRouteNow() },
-      ],
-    );
-  }
-
-  async function startRoute() {
-    if (routeFinished) return;
-    const firstPending = stops.find((stop) => stop.status === 'pending');
+      pending > 0 ? `Quedan ${pending} paradas pendientes. ¿Quieres terminar la ruta y guarda'pending');
     if (!firstPending) {
       setStorageError('Agrega una parada pendiente antes de iniciar la ruta.');
       return;
@@ -1004,23 +1032,7 @@ export default function RouteScreen() {
     await startRouteAt(firstPending);
   }
 
-  function confirmApproximateOrder(ids: string[]) {
-    Alert.alert(
-      'Orden aproximado',
-      'Connect ordenará las paradas por cercanía en línea recta y volverá a numerarlas. Confirma este orden antes de escribir los números en tus paquetes.',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Ordenar paradas', onPress: () => { void applyApproximateOrder(ids); } },
-      ],
-    );
-  }
-
-  function askForFinalPoint() {
-    setFinalPointDialogVisible(true);
-  }
-
-  async function applyChosenFinalPoint(useLastStop: boolean, favoriteAddress?: string) {
-    const nextEndAddress = useLastStop ? '' : (favoriteAddress ?? endAddress).trim();
+  function c   const nextEndAddress = useLastStop ? '' : (favoriteAddress ?? endAddress).trim();
     if (!useLastStop && !nextEndAddress) {
       setStorageError('Escribe el domicilio final o elige un favorito.');
       return;
@@ -1029,20 +1041,7 @@ export default function RouteScreen() {
     setEndAddress(nextEndAddress);
     setFinalPointDialogVisible(false);
     try {
-      if (isFirebaseConfigured && user) await updateRouteEndpoints(user.uid, '', nextEndAddress, useLastStop, routeId ?? undefined);
-      else if (isFirebaseConfigured) throw new Error('login-required');
-      else await saveLocalRouteEndpoints({ startAddress: '', endAddress: nextEndAddress, endAtLastStop: useLastStop }, routeId ?? undefined);
-      if (routeStarted) setStorageError('Destino final actualizado. El orden de los paquetes se mantiene.');
-      else await optimizeCurrentRoute();
-    } catch (error) { setStorageError(`No se pudo guardar el destino. Código: ${describeOperationError(error)}.`); }
-  }
-
-  async function optimizeCurrentRoute() {
-    if (isOptimizing || routeStarted || routeFinished || stops.length === 0) return;
-    setIsOptimizing(true);
-    setStorageError('');
-    try {
-      let origin: { latitude: number; longitude: number } | null = null;
+      if (isFirebaseConfigured && user) awa    let origin: { latitude: number; longitude: number } | null = null;
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.granted) {
         try {
@@ -1059,11 +1058,7 @@ export default function RouteScreen() {
       for (const [index, stop] of orderedByCurrentSequence.entries()) {
         try {
           const result = (await Location.geocodeAsync(`${stop.address}, Santiago, Chile`))[0];
-          if (result) coordinates.set(stop.id, { latitude: result.latitude, longitude: result.longitude });
-        } catch {
-          // Show the addresses that could not be located below instead of silently dropping them.
-        }
-        if (index < orderedByCurrentSequence.length - 1) await new Promise((resolve) => setTimeout(resolve, 250));
+          if (result) coordinates.set(stop.id, { latitude: result.latitude, entSequence.length - 1) await new Promise((resolve) => setTimeout(resolve, 250));
       }
 
       const missing = orderedByCurrentSequence.filter((stop) => !coordinates.has(stop.id));
@@ -1084,28 +1079,11 @@ export default function RouteScreen() {
       }
       const ordered = [remaining.splice(firstIndex, 1)[0]];
       while (remaining.length) {
-        const current = coordinates.get(ordered[ordered.length - 1].id)!;
-        let nearestIndex = 0;
-        let nearestDistance = Number.POSITIVE_INFINITY;
-        remaining.forEach((candidate, index) => {
-          const point = coordinates.get(candidate.id)!;
-          const distance = Math.hypot(point.latitude - current.latitude, point.longitude - current.longitude);
-          if (distance < nearestDistance) { nearestDistance = distance; nearestIndex = index; }
+        const current estDistance) { nearestDistance = distance; nearestIndex = index; }
         });
         ordered.push(remaining.splice(nearestIndex, 1)[0]);
       }
-      confirmApproximateOrder(ordered.map((stop) => stop.id));
-    } catch {
-      setStorageError('No se pudieron ubicar las direcciones. Revisa la conexión e inténtalo otra vez.');
-    } finally {
-      setIsOptimizing(false);
-    }
-  }
-
-  async function applyApproximateOrder(ids: string[]) {
-    if (routeStarted) return;
-    const byId = new Map(stops.map((stop) => [stop.id, stop]));
-    const ordered = ids.flatMap((id) => byId.has(id) ? [byId.get(id)!] : []);
+      confirmApproximateOrder(ordered.map((st=> byId.has(id) ? [byId.get(id)!] : []);
     const next = ordered.map((stop, index) => ({ ...stop, sequence: index + 1, displayNumber: String(index + 1) }));
     try {
       if (isFirebaseConfigured && user) await updateDeliveryOrder(user.uid, next.map(({ id, sequence, displayNumber: number }) => ({ id, sequence, displayNumber: number })), routeId ?? undefined);
@@ -1113,41 +1091,15 @@ export default function RouteScreen() {
         setStorageError('Inicia sesión para guardar el orden optimizado.');
         return;
       } else await persistLocal(next);
-      if (!isFirebaseConfigured) await saveLocalRouteOptimized(true, routeId ?? undefined);
-      setStops(next);
-      setRouteOptimized(true);
-      setActiveStopId(next.find((stop) => stop.status === 'pending')?.id ?? null);
-      setStorageError('');
-    } catch {
-      setStorageError('No se pudo guardar el nuevo orden. Inténtalo de nuevo.');
-    }
-  }
-
-  function openFavoriteDialog(target: 'start' | 'end') {
-    const value = target === 'start' ? startAddress : endAddress;
+      if (!isFirebaseConfigured) await sonst value = target === 'start' ? startAddress : endAddress;
     if (!value.trim()) {
       setStorageError('Escribe primero la dirección que quieres guardar como favorita.');
       return;
-    }
-    setFavoriteAddressDraft(value.trim());
-    setFavoriteLabel('');
-    setFavoriteDialogVisible(true);
-  }
-
-  async function confirmSaveFavorite() {
-    try {
-      setRouteFavorites(await saveRouteFavorite(favoriteLabel, favoriteAddressDraft));
+ ait saveRouteFavorite(favoriteLabel, favoriteAddressDraft));
       setFavoriteDialogVisible(false);
       setStorageError('Dirección guardada en favoritos.');
     } catch {
-      setStorageError('Escribe un nombre para el favorito y revisa la dirección.');
-    }
-  }
-
-  return (
-    <>
-    <ThemeLayer><SafeAreaView style={styles.safeArea}>
-      {routeStarted && liveNavigationVisible ? (
+      setStorageErble ? (
         <View style={styles.liveRouteScreen}>
           <View style={styles.liveRouteHeader}>
             <Pressable style={styles.liveListButton} onPress={() => setStopListExpanded(true)}><Text style={styles.liveListButtonText}>☰  Paradas</Text></Pressable>
@@ -1162,25 +1114,7 @@ export default function RouteScreen() {
             {!!activeStop?.note?.trim() && <Text style={styles.liveStopNote}>Paquetes: {activeStop.note}</Text>}
             {activeStop && <Pressable style={styles.liveNavigateButton} onPress={() => void navigateToStop(activeStop)} accessibilityRole="button" accessibilityLabel={`Navegar a ${activeStop.address}`}><Text style={styles.liveNavigateButtonText}>↗  Navegar</Text></Pressable>}
             {activeStop ? <View style={styles.liveActionRow}>
-              <Pressable style={[styles.deliveredButton, styles.liveActionButton, (!routeOptimized || busy) && styles.disabledButton]} onPress={() => void markDelivered(activeStop)} disabled={busy || !routeOptimized}><Text style={styles.deliveredButtonText}>✓  Entregada</Text></Pressable>
-              <Pressable style={[styles.failedButton, styles.liveActionButton, (!routeOptimized || busy) && styles.disabledButton]} onPress={() => askFailureReason(activeStop)} disabled={busy || !routeOptimized}><Text style={styles.failedButtonText}>Fallida</Text></Pressable>
-            </View> : <Text style={styles.finishedHint}>Puedes cerrar la ruta y guardar el resumen.</Text>}
-            <View style={styles.liveFooterRow}>
-              <Text style={styles.liveRemaining}>{pendingStops.length} pendientes</Text>
-              <Pressable style={styles.liveFinishButton} onPress={confirmFinishRoute} disabled={busy}><Text style={styles.liveFinishText}>Terminar ruta</Text></Pressable>
-            </View>
-          </View>
-        </View>
-      ) : (
-      <ScrollView ref={routeScrollRef} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Link href="/" asChild><Pressable style={styles.backButton}><Text style={styles.backText}>‹  Inicio</Text></Pressable></Link>
-        <Text style={styles.eyebrow}>PLANIFICACIÓN</Text>
-        <Text style={styles.title}>{stops.length === 0 ? 'Nuevo día' : 'Tu ruta'}</Text>
-        <Text style={styles.subtitle}>Prepara las paradas, define el orden y sal a repartir.</Text>
-
-        <View style={styles.workflow} accessibilityLabel="Flujo de ruta: añadir paradas, optimizar y navegar">
-          <View style={styles.workflowStep}>
-            <View style={[styles.workflowNumber, stops.length > 0 && styles.workflowNumberActive]}><Text style={[styles.workflowNumberText, stops.length > 0 && styles.workflowNumberTextActive]}>1</Text></View>
+              <Pressable style={[styles.deliveredButton, styles.liveActionButton, (!routeOptimized || busy) && styles.disabledButton]} onPress={() => void markDelivered(activeStop)} disView>
             <Text style={styles.workflowLabel}>Añade paradas</Text>
           </View>
           <View style={styles.workflowConnector} />
@@ -1214,9 +1148,9 @@ export default function RouteScreen() {
             <Text style={styles.addButtonText}>{busy ? routeOptimized ? 'Buscando ubicación…' : 'Guardando…' : '＋  Añadir parada'}</Text>
           </Pressable></>}
           <Pressable style={[styles.importButton, (isLoading || busy || isReadingFile) && styles.disabledButton]} onPress={chooseCsvFile} disabled={isLoading || busy || isReadingFile}>
-          <Text style={styles.importButtonText}>{isReadingFile ? 'Abriendo archivo…' : routeFinished ? 'Importar Excel a una ruta nueva' : 'Importar Excel o CSV'}</Text>
+          <Text style={styles.importButtonText}>{isReadingFile ? 'Abriendo archivo…' : routeFinished ? 'Importar archivo a una ruta nueva' : 'Importar PDF, Excel o CSV'}</Text>
           </Pressable>
-          <Text style={styles.csvHint}>Admite .xlsx, .xls y .csv; importa la primera hoja.</Text>
+          <Text style={styles.csvHint}>Admite PDF con texto seleccionable, .xlsx, .xls y .csv.</Text>
         </View>
 
         {importPreview && <View style={styles.previewCard}>
@@ -1242,7 +1176,7 @@ export default function RouteScreen() {
           {routeFinished && <Pressable style={styles.startButton} onPress={() => void startAnotherRoute()} disabled={busy}><Text style={styles.startButtonText}>{busy ? 'Creando ruta…' : '＋  Crear otra ruta hoy'}</Text></Pressable>}
         </View>}
         <View style={styles.listHeader}>
-          <Text style={styles.listHeading}>{routeFinished ? 'Ruta cerrada' : 'Paradas de hoy'} <Text style={styles.stopCount}>{stops.length}</Text></Text>
+          <View style={styles.listTitleRow}><Text style={styles.listHeading}>{routeFinished ? 'Ruta cerrada' : 'Paradas de hoy'}</Text><Text style={styles.stopCount}>{stops.length}</Text></View>
         <View style={styles.listHeaderActions}><Pressable hitSlop={8} onPress={() => void shareCurrentRoute()} disabled={stops.length === 0 || !routeOptimized}><Text style={[styles.historyLink, (stops.length === 0 || !routeOptimized) && styles.historyLinkDisabled]}>{routeOptimized ? 'Compartir ↗' : 'Optimiza para compartir'}</Text></Pressable><Link href="/historial" asChild><Pressable hitSlop={8}><Text style={styles.historyLink}>Historial →</Text></Pressable></Link></View>
         </View>
         <View style={styles.stopTabs}>
@@ -1422,7 +1356,7 @@ const styles = StyleSheet.create({
   accountNotice: { backgroundColor: '#E7EDE3', borderRadius: 14, padding: 14, marginTop: 16 }, accountText: { color: colors.ink, fontSize: 12, lineHeight: 18 }, accountLink: { color: colors.green, fontWeight: '700', marginTop: 8 },
   navigationCard: { backgroundColor: colors.white, borderColor: colors.line, borderWidth: 1, borderRadius: 16, padding: 14, marginTop: 14 }, navigationTitle: { color: colors.ink, fontSize: 14, fontWeight: '700' }, navigationHint: { color: colors.muted, fontSize: 10, lineHeight: 15, marginTop: 5 }, providerRow: { flexDirection: 'row', gap: 6, marginTop: 10 }, providerButton: { flex: 1, minHeight: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 9, borderWidth: 1, borderColor: colors.line }, providerSelected: { backgroundColor: '#EAF1E8', borderColor: '#B9CBB7' }, providerText: { color: colors.muted, fontSize: 9, fontWeight: '600', textAlign: 'center' }, providerTextSelected: { color: colors.green, fontWeight: '700' }, startButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.green, borderRadius: 11, marginTop: 10 }, startButtonText: { color: colors.white, fontSize: 12, fontWeight: '700' },
   finishRouteSection: { alignItems: 'center', marginTop: 15, marginBottom: 16, padding: 14, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line }, finishRouteHint: { color: colors.muted, fontSize: 11, marginBottom: 9 }, finishRouteButton: { width: '100%', minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 11, borderWidth: 1, borderColor: '#D8A69E', backgroundColor: '#FFF9F7' }, finishRouteButtonText: { color: colors.red, fontSize: 12, fontWeight: '700' }, finishedHint: { color: colors.muted, fontSize: 10, lineHeight: 15, marginTop: 9, textAlign: 'center' },
-  listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 25, marginBottom: 10 }, listHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 12 }, listHeading: { color: colors.ink, fontSize: 15, fontWeight: '700' }, stopCount: { color: colors.green, fontWeight: '700' }, historyLink: { color: colors.green, fontSize: 12, fontWeight: '700' }, historyLinkDisabled: { color: colors.muted }, helper: { color: colors.muted, padding: 12 }, routeEstimate: { color: colors.muted, fontSize: 10, lineHeight: 15, marginTop: -4, marginBottom: 10 }, optimizeRouteButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: colors.green, marginBottom: 10 }, optimizeRouteText: { color: colors.white, fontSize: 12, fontWeight: '700' },
+  listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 25, marginBottom: 10 }, listTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5 }, listHeaderActions: { flexDirection: 'row', alignItems: 'center', gap: 12 }, listHeading: { color: colors.ink, fontSize: 15, fontWeight: '700' }, stopCount: { color: colors.green, fontWeight: '700' }, historyLink: { color: colors.green, fontSize: 12, fontWeight: '700' }, historyLinkDisabled: { color: colors.muted }, helper: { color: colors.muted, padding: 12 }, routeEstimate: { color: colors.muted, fontSize: 10, lineHeight: 15, marginTop: -4, marginBottom: 10 }, optimizeRouteButton: { minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 11, backgroundColor: colors.green, marginBottom: 10 }, optimizeRouteText: { color: colors.white, fontSize: 12, fontWeight: '700' },
   stopTabs: { flexDirection: 'row', padding: 4, borderRadius: 12, backgroundColor: '#E7EDE3', marginBottom: 11 }, stopTab: { flex: 1, minHeight: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 9 }, stopTabActive: { backgroundColor: colors.white }, stopTabText: { color: colors.muted, fontSize: 11, fontWeight: '600' }, stopTabTextActive: { color: colors.green, fontWeight: '700' }, emptyListCard: { padding: 18, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, borderRadius: 15, alignItems: 'center' }, emptyListTitle: { color: colors.ink, fontSize: 13, fontWeight: '700' }, emptyListText: { color: colors.muted, fontSize: 11, lineHeight: 17, textAlign: 'center', marginTop: 6 },
   emptyCard: { minHeight: 185, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, marginTop: 3, backgroundColor: colors.white, borderRadius: 22, borderWidth: 1, borderColor: colors.line }, pin: { width: 58, height: 58, borderRadius: 20, backgroundColor: '#EAF1E8', alignItems: 'center', justifyContent: 'center', marginBottom: 17 }, pinText: { color: colors.green, fontSize: 30 }, emptyTitle: { color: colors.ink, fontSize: 17, fontWeight: '700', textAlign: 'center' }, emptyDescription: { color: colors.muted, fontSize: 13, lineHeight: 20, textAlign: 'center', marginTop: 9 },
   stopCard: { backgroundColor: colors.white, borderRadius: 15, borderWidth: 1, borderColor: colors.line, padding: 13, marginBottom: 8 }, stopCardDelivered: { backgroundColor: '#F1F8F0', borderColor: '#3E8B55', borderWidth: 2 }, stopCardFailed: { backgroundColor: '#FFF4F2', borderColor: '#B84035', borderWidth: 2 }, stopCardSelected: { borderColor: '#2878D0', borderWidth: 2 }, stopTop: { flexDirection: 'row', alignItems: 'center' }, stopIdentity: { flex: 1, flexDirection: 'row', alignItems: 'center' }, stopNumber: { width: 30, height: 30, borderRadius: 10, backgroundColor: '#EAF1E8', alignItems: 'center', justifyContent: 'center' }, stopNumberText: { color: colors.green, fontSize: 12, fontWeight: '700' }, addressCopy: { flex: 1, marginLeft: 11 }, stopAddress: { color: colors.ink, fontSize: 13 }, customerName: { color: colors.ink, fontSize: 10, fontWeight: '600', marginTop: 4 }, customerCount: { color: colors.green, fontSize: 10, fontWeight: '700', marginTop: 4 }, removeStop: { color: colors.muted, fontSize: 23, paddingHorizontal: 5 },

@@ -88,7 +88,7 @@ Crear una app móvil para repartidores que organice rutas y entregas, y que inco
 - Pantallas iniciales de Inicio y Ruta.
 - Se pueden añadir y eliminar direcciones; quedan guardadas localmente mientras Firebase no esté configurado.
 - La app conserva rutas locales por fecha y muestra un resumen del historial; con sesión de Firebase puede consultar las últimas 30 rutas de la cuenta.
-- La pantalla de ruta permite importar CSV y libros de Excel (`.xlsx` y `.xls`), con vista previa antes de agregar las direcciones. Los libros Excel importan su primera hoja; se admiten columnas llamadas Dirección, Domicilio o Address, o la primera columna.
+- La pantalla de ruta permite importar PDF con texto seleccionable, CSV y libros de Excel (`.xlsx` y `.xls`), con vista previa antes de agregar las direcciones. Los libros Excel importan su primera hoja; se admiten columnas llamadas Dirección, Domicilio o Address, o la primera columna. La importación PDF se implementó, pero su funcionamiento en Expo Go todavía requiere validación en el teléfono.
 - Inicio muestra la fecha, el nombre editable de la ruta actual y los totales de paradas entregadas, pendientes y fallidas; el resumen se actualiza al volver a Inicio.
 - Las pestañas móviles muestran siempre los nombres Inicio, Ruta, Cuenta e Historial.
 - La app tiene registro e inicio de sesión por correo con verificación de correo.
