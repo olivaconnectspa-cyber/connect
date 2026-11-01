@@ -5,6 +5,13 @@ module.exports = ({ config }) => {
   const iosMapsKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_IOS_API_KEY;
   const plugins = [...(appJson.expo.plugins ?? [])];
 
+  // SDK 58 requires these installed Expo modules to be declared in app config.
+  for (const plugin of ['expo-font', 'expo-image', 'expo-status-bar', 'expo-web-browser']) {
+    if (!plugins.some((entry) => (Array.isArray(entry) ? entry[0] : entry) === plugin)) {
+      plugins.push(plugin);
+    }
+  }
+
   plugins.push([
     'expo-image-picker',
     {

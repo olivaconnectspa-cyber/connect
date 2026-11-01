@@ -1,4 +1,5 @@
 import { Tabs, type BottomTabBarProps } from 'expo-router/js-tabs';
+import { useRouter } from 'expo-router';
 import { onAuthStateChanged } from 'firebase/auth';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native';
@@ -15,6 +16,7 @@ const colors = {
 };
 
 export default function AppTabs() {
+  const router = useRouter();
   const systemScheme = useColorScheme();
   const { theme } = useAppPreferences();
   const dark = theme === 'dark' || (theme === 'system' && systemScheme === 'dark');
@@ -29,11 +31,14 @@ export default function AppTabs() {
     });
   }, []);
 
+  useEffect(() => {
+    if (userReady && isFirebaseConfigured && !isVerified) router.replace('/cuenta');
+  }, [isFirebaseConfigured, isVerified, router, userReady]);
+
   if (!userReady) return <View style={[styles.loading, dark && styles.darkLoading]}><ActivityIndicator color={dark ? '#A6D2B1' : colors.green} /><Text style={[styles.loadingText, dark && styles.darkLoadingText]}>Cargando Connect…</Text></View>;
 
   return (
     <Tabs
-      initialRouteName={isFirebaseConfigured && !isVerified ? 'cuenta' : 'index'}
       tabBar={(props) => <FloatingTabBar {...props} accountOnly={isFirebaseConfigured && !isVerified} dark={dark} />}
       screenOptions={{
         headerShown: false,
@@ -51,7 +56,7 @@ export default function AppTabs() {
   );
 }
 
-function FloatingTabBar({ state, descriptors, navigation, insets, accountOnly, dark }: BottomTabBarProps & { accountOnly: boolean; dark: boolean }) {
+function FloatingTabBar({ state, descriptors, navigateToTab, insets, accountOnly, dark }: BottomTabBarProps & { accountOnly: boolean; dark: boolean }) {
   const visibleRoutes = state.routes.filter((route) => route.name !== 'explore' && route.name !== 'planes' && (!accountOnly || route.name === 'cuenta'));
 
   return (
@@ -71,8 +76,7 @@ function FloatingTabBar({ state, descriptors, navigation, insets, accountOnly, d
               focused={focused}
               dark={dark}
               onPress={() => {
-                const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-                if (!focused && !event.defaultPrevented) navigation.navigate(route.name, route.params);
+                if (!focused) navigateToTab(route.key);
               }}
             />
           );

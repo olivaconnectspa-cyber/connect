@@ -4,7 +4,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as XLSX from 'xlsx';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Linking, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Animated, Linking, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View, type ScrollViewInstance } from 'react-native';
 import { canOfferParkingPhoto } from '@/lib/parking-photo';
 import * as Location from 'expo-location';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -133,7 +133,7 @@ export default function RouteScreen() {
   const nextStopNoticeOpacity = useRef(new Animated.Value(0)).current;
   const nextStopNoticeOffset = useRef(new Animated.Value(10)).current;
   const nextStopNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const routeScrollRef = useRef<ScrollView>(null);
+  const routeScrollRef = useRef<ScrollViewInstance | null>(null);
   const notificationStopIdRef = useRef<string | null>(null);
   const selectedAddressSuggestionRef = useRef(false);
   const autoCreateRouteRef = useRef<Promise<string> | null>(null);
@@ -1019,12 +1019,39 @@ export default function RouteScreen() {
       setRouteFinished(false);
       setImportPreview(null);
       setRouteSummary(null);
-      setcode === 'permission-denied'
+      setSummaryVisible(false);
+      setVisitedStopsExpanded(false);
+      setStopListExpanded(false);
+      setAddress('');
+    } catch (error) {
+      console.error('No se pudo crear otra ruta hoy:', error);
+      const code = describeOperationError(error);
+      setStorageError(code === 'login-required'
+        ? 'Inicia sesión para crear otra ruta y guardarla en tu cuenta.'
+        : code === 'permission-denied'
           ? 'Firebase rechazó crear la ruta (permission-denied). Hay que publicar las reglas de Firestore actualizadas en Firebase Console.'
-          : `No se pustops.filter((stop) => stop.status === 'pending').length;
+          : `No se pudo crear otra ruta. Código: ${code}.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function confirmFinishRoute() {
+    if (!routeStarted || routeFinished) return;
+    const pending = stops.filter((stop) => stop.status === 'pending').length;
     Alert.alert(
       'Terminar ruta',
-      pending > 0 ? `Quedan ${pending} paradas pendientes. ¿Quieres terminar la ruta y guarda'pending');
+      pending > 0 ? `Quedan ${pending} paradas pendientes. ¿Quieres terminar la ruta y guardarlas como pendientes?` : '¿Quieres terminar y guardar el resumen de esta ruta?',
+      [
+        { text: 'Seguir en ruta', style: 'cancel' },
+        { text: 'Terminar ruta', style: 'destructive', onPress: () => void finishRouteNow() },
+      ],
+    );
+  }
+
+  async function startRoute() {
+    if (routeFinished) return;
+    const firstPending = stops.find((stop) => stop.status === 'pending');
     if (!firstPending) {
       setStorageError('Agrega una parada pendiente antes de iniciar la ruta.');
       return;
@@ -1032,7 +1059,23 @@ export default function RouteScreen() {
     await startRouteAt(firstPending);
   }
 
-  function c   const nextEndAddress = useLastStop ? '' : (favoriteAddress ?? endAddress).trim();
+  function confirmApproximateOrder(ids: string[]) {
+    Alert.alert(
+      'Orden aproximado',
+      'Connect ordenará las paradas por cercanía en línea recta y volverá a numerarlas. Confirma este orden antes de escribir los números en tus paquetes.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Ordenar paradas', onPress: () => { void applyApproximateOrder(ids); } },
+      ],
+    );
+  }
+
+  function askForFinalPoint() {
+    setFinalPointDialogVisible(true);
+  }
+
+  async function applyChosenFinalPoint(useLastStop: boolean, favoriteAddress?: string) {
+    const nextEndAddress = useLastStop ? '' : (favoriteAddress ?? endAddress).trim();
     if (!useLastStop && !nextEndAddress) {
       setStorageError('Escribe el domicilio final o elige un favorito.');
       return;
@@ -1041,7 +1084,20 @@ export default function RouteScreen() {
     setEndAddress(nextEndAddress);
     setFinalPointDialogVisible(false);
     try {
-      if (isFirebaseConfigured && user) awa    let origin: { latitude: number; longitude: number } | null = null;
+      if (isFirebaseConfigured && user) await updateRouteEndpoints(user.uid, '', nextEndAddress, useLastStop, routeId ?? undefined);
+      else if (isFirebaseConfigured) throw new Error('login-required');
+      else await saveLocalRouteEndpoints({ startAddress: '', endAddress: nextEndAddress, endAtLastStop: useLastStop }, routeId ?? undefined);
+      if (routeStarted) setStorageError('Destino final actualizado. El orden de los paquetes se mantiene.');
+      else await optimizeCurrentRoute();
+    } catch (error) { setStorageError(`No se pudo guardar el destino. Código: ${describeOperationError(error)}.`); }
+  }
+
+  async function optimizeCurrentRoute() {
+    if (isOptimizing || routeStarted || routeFinished || stops.length === 0) return;
+    setIsOptimizing(true);
+    setStorageError('');
+    try {
+      let origin: { latitude: number; longitude: number } | null = null;
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.granted) {
         try {
@@ -1058,7 +1114,11 @@ export default function RouteScreen() {
       for (const [index, stop] of orderedByCurrentSequence.entries()) {
         try {
           const result = (await Location.geocodeAsync(`${stop.address}, Santiago, Chile`))[0];
-          if (result) coordinates.set(stop.id, { latitude: result.latitude, entSequence.length - 1) await new Promise((resolve) => setTimeout(resolve, 250));
+          if (result) coordinates.set(stop.id, { latitude: result.latitude, longitude: result.longitude });
+        } catch {
+          // Show the addresses that could not be located below instead of silently dropping them.
+        }
+        if (index < orderedByCurrentSequence.length - 1) await new Promise((resolve) => setTimeout(resolve, 250));
       }
 
       const missing = orderedByCurrentSequence.filter((stop) => !coordinates.has(stop.id));
@@ -1079,11 +1139,28 @@ export default function RouteScreen() {
       }
       const ordered = [remaining.splice(firstIndex, 1)[0]];
       while (remaining.length) {
-        const current estDistance) { nearestDistance = distance; nearestIndex = index; }
+        const current = coordinates.get(ordered[ordered.length - 1].id)!;
+        let nearestIndex = 0;
+        let nearestDistance = Number.POSITIVE_INFINITY;
+        remaining.forEach((candidate, index) => {
+          const point = coordinates.get(candidate.id)!;
+          const distance = Math.hypot(point.latitude - current.latitude, point.longitude - current.longitude);
+          if (distance < nearestDistance) { nearestDistance = distance; nearestIndex = index; }
         });
         ordered.push(remaining.splice(nearestIndex, 1)[0]);
       }
-      confirmApproximateOrder(ordered.map((st=> byId.has(id) ? [byId.get(id)!] : []);
+      confirmApproximateOrder(ordered.map((stop) => stop.id));
+    } catch {
+      setStorageError('No se pudieron ubicar las direcciones. Revisa la conexión e inténtalo otra vez.');
+    } finally {
+      setIsOptimizing(false);
+    }
+  }
+
+  async function applyApproximateOrder(ids: string[]) {
+    if (routeStarted) return;
+    const byId = new Map(stops.map((stop) => [stop.id, stop]));
+    const ordered = ids.flatMap((id) => byId.has(id) ? [byId.get(id)!] : []);
     const next = ordered.map((stop, index) => ({ ...stop, sequence: index + 1, displayNumber: String(index + 1) }));
     try {
       if (isFirebaseConfigured && user) await updateDeliveryOrder(user.uid, next.map(({ id, sequence, displayNumber: number }) => ({ id, sequence, displayNumber: number })), routeId ?? undefined);
@@ -1091,15 +1168,41 @@ export default function RouteScreen() {
         setStorageError('Inicia sesión para guardar el orden optimizado.');
         return;
       } else await persistLocal(next);
-      if (!isFirebaseConfigured) await sonst value = target === 'start' ? startAddress : endAddress;
+      if (!isFirebaseConfigured) await saveLocalRouteOptimized(true, routeId ?? undefined);
+      setStops(next);
+      setRouteOptimized(true);
+      setActiveStopId(next.find((stop) => stop.status === 'pending')?.id ?? null);
+      setStorageError('');
+    } catch {
+      setStorageError('No se pudo guardar el nuevo orden. Inténtalo de nuevo.');
+    }
+  }
+
+  function openFavoriteDialog(target: 'start' | 'end') {
+    const value = target === 'start' ? startAddress : endAddress;
     if (!value.trim()) {
       setStorageError('Escribe primero la dirección que quieres guardar como favorita.');
       return;
- ait saveRouteFavorite(favoriteLabel, favoriteAddressDraft));
+    }
+    setFavoriteAddressDraft(value.trim());
+    setFavoriteLabel('');
+    setFavoriteDialogVisible(true);
+  }
+
+  async function confirmSaveFavorite() {
+    try {
+      setRouteFavorites(await saveRouteFavorite(favoriteLabel, favoriteAddressDraft));
       setFavoriteDialogVisible(false);
       setStorageError('Dirección guardada en favoritos.');
     } catch {
-      setStorageErble ? (
+      setStorageError('Escribe un nombre para el favorito y revisa la dirección.');
+    }
+  }
+
+  return (
+    <>
+    <ThemeLayer><SafeAreaView style={styles.safeArea}>
+      {routeStarted && liveNavigationVisible ? (
         <View style={styles.liveRouteScreen}>
           <View style={styles.liveRouteHeader}>
             <Pressable style={styles.liveListButton} onPress={() => setStopListExpanded(true)}><Text style={styles.liveListButtonText}>☰  Paradas</Text></Pressable>
@@ -1114,7 +1217,25 @@ export default function RouteScreen() {
             {!!activeStop?.note?.trim() && <Text style={styles.liveStopNote}>Paquetes: {activeStop.note}</Text>}
             {activeStop && <Pressable style={styles.liveNavigateButton} onPress={() => void navigateToStop(activeStop)} accessibilityRole="button" accessibilityLabel={`Navegar a ${activeStop.address}`}><Text style={styles.liveNavigateButtonText}>↗  Navegar</Text></Pressable>}
             {activeStop ? <View style={styles.liveActionRow}>
-              <Pressable style={[styles.deliveredButton, styles.liveActionButton, (!routeOptimized || busy) && styles.disabledButton]} onPress={() => void markDelivered(activeStop)} disView>
+              <Pressable style={[styles.deliveredButton, styles.liveActionButton, (!routeOptimized || busy) && styles.disabledButton]} onPress={() => void markDelivered(activeStop)} disabled={busy || !routeOptimized}><Text style={styles.deliveredButtonText}>✓  Entregada</Text></Pressable>
+              <Pressable style={[styles.failedButton, styles.liveActionButton, (!routeOptimized || busy) && styles.disabledButton]} onPress={() => askFailureReason(activeStop)} disabled={busy || !routeOptimized}><Text style={styles.failedButtonText}>Fallida</Text></Pressable>
+            </View> : <Text style={styles.finishedHint}>Puedes cerrar la ruta y guardar el resumen.</Text>}
+            <View style={styles.liveFooterRow}>
+              <Text style={styles.liveRemaining}>{pendingStops.length} pendientes</Text>
+              <Pressable style={styles.liveFinishButton} onPress={confirmFinishRoute} disabled={busy}><Text style={styles.liveFinishText}>Terminar ruta</Text></Pressable>
+            </View>
+          </View>
+        </View>
+      ) : (
+      <ScrollView ref={routeScrollRef} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Link href="/" asChild><Pressable style={styles.backButton}><Text style={styles.backText}>‹  Inicio</Text></Pressable></Link>
+        <Text style={styles.eyebrow}>PLANIFICACIÓN</Text>
+        <Text style={styles.title}>{stops.length === 0 ? 'Nuevo día' : 'Tu ruta'}</Text>
+        <Text style={styles.subtitle}>Prepara las paradas, define el orden y sal a repartir.</Text>
+
+        <View style={styles.workflow} accessibilityLabel="Flujo de ruta: añadir paradas, optimizar y navegar">
+          <View style={styles.workflowStep}>
+            <View style={[styles.workflowNumber, stops.length > 0 && styles.workflowNumberActive]}><Text style={[styles.workflowNumberText, stops.length > 0 && styles.workflowNumberTextActive]}>1</Text></View>
             <Text style={styles.workflowLabel}>Añade paradas</Text>
           </View>
           <View style={styles.workflowConnector} />

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ScrollViewInstance } from 'react-native';
 import { Link, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
@@ -52,7 +52,7 @@ export default function AddressCommunityScreen() {
   const [comments, setComments] = useState<CommunityComment[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance | null>(null);
   const photoSectionY = useRef(0);
   const autoCaptureAddress = useRef('');
 
