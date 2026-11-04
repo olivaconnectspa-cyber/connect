@@ -16,15 +16,31 @@ if (!fs.existsSync(pdfjsPath)) {
   process.exit(0);
 }
 
-const source = fs.readFileSync(pdfjsPath, 'utf8');
+let source = fs.readFileSync(pdfjsPath, 'utf8');
 const dynamicWorkerImport = /      const worker = await import\(\/\*webpackIgnore: true\*\/this\.workerSrc\);\r?\n      return worker\.WorkerMessageHandler;/;
 const reactNativeWorkerError = '      throw new Error("A PDF.js worker handler must be registered in this runtime.");';
+const loopbackNullOptions = /structuredClone\(obj, transfer \? \{\r?\n\s*transfer\r?\n\s*\} : null\)/;
+const loopbackSafeOptions = 'structuredClone(obj, transfer ? { transfer } : undefined)';
 
-if (source.includes(reactNativeWorkerError)) process.exit(0);
+let changed = false;
 
-if (!dynamicWorkerImport.test(source)) {
-  throw new Error('Could not locate PDF.js dynamic worker import; review the SDK compatibility patch.');
+if (!source.includes(reactNativeWorkerError)) {
+  if (!dynamicWorkerImport.test(source)) {
+    throw new Error('Could not locate PDF.js dynamic worker import; review the SDK compatibility patch.');
+  }
+  source = source.replace(dynamicWorkerImport, reactNativeWorkerError);
+  changed = true;
 }
 
-fs.writeFileSync(pdfjsPath, source.replace(dynamicWorkerImport, reactNativeWorkerError));
-console.log('Applied the Hermes-compatible PDF.js worker patch.');
+if (!source.includes(loopbackSafeOptions)) {
+  if (!loopbackNullOptions.test(source)) {
+    throw new Error('Could not locate PDF.js LoopbackPort structuredClone call; review the React Native compatibility patch.');
+  }
+  source = source.replace(loopbackNullOptions, loopbackSafeOptions);
+  changed = true;
+}
+
+if (changed) {
+  fs.writeFileSync(pdfjsPath, source);
+  console.log('Applied the Hermes-compatible PDF.js worker patch.');
+}
