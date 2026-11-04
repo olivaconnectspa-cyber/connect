@@ -186,7 +186,7 @@ export default function HomeScreen() {
           </View>
           <Text style={styles.emptyText}>{routeStats.total === 0 ? 'Todavía no tienes paradas en la ruta de hoy.' : 'Resumen actualizado al volver de tu ruta.'}</Text>
           <Link href={'/ruta' as Href} asChild>
-            <Pressable style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
+            <Pressable style={({ pressed }) => StyleSheet.flatten([styles.primaryButton, pressed && styles.pressed])}>
               <Text style={styles.primaryButtonText}>{routeStats.total === 0 ? '＋  Añadir paradas' : 'Abrir plan de ruta  ›'}</Text>
             </Pressable>
           </Link>
@@ -194,7 +194,7 @@ export default function HomeScreen() {
 
         <Text style={styles.sectionTitle}>Tu operación</Text>
         <Link href={'/historial' as Href} asChild>
-          <Pressable style={({ pressed }) => [styles.actionCard, pressed && styles.pressed]}>
+          <Pressable style={({ pressed }) => StyleSheet.flatten([styles.actionCard, pressed && styles.pressed])}>
             <View style={styles.actionIcon}><Text style={styles.actionIconText}>↻</Text></View>
             <View style={styles.actionCopy}>
               <Text style={styles.actionTitle}>Historial de rutas</Text>
@@ -204,7 +204,7 @@ export default function HomeScreen() {
           </Pressable>
         </Link>
         <Link href={'/direcciones' as Href} asChild>
-          <Pressable style={({ pressed }) => [styles.actionCard, pressed && styles.pressed]}>
+          <Pressable style={({ pressed }) => StyleSheet.flatten([styles.actionCard, pressed && styles.pressed])}>
             <View style={[styles.actionIcon, styles.communityIcon]}><Text style={styles.actionIconText}>✦</Text></View>
             <View style={styles.actionCopy}>
               <Text style={styles.actionTitle}>Datos de direcciones</Text>

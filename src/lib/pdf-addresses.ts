@@ -8,7 +8,7 @@ type PdfJsWorkerGlobal = typeof globalThis & {
   pdfjsWorker?: { WorkerMessageHandler: typeof WorkerMessageHandler };
 };
 const pdfJsGlobal = globalThis as PdfJsWorkerGlobal;
-pdfJsGlobal.pdfjsWorker ??= { WorkerMessageHandler };
+pdfJsGlobal.pdfjsWorker = { WorkerMessageHandler };
 
 type PositionedText = { x: number; y: number; width: number; text: string };
 type TextLine = { y: number; items: PositionedText[] };
